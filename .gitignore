@@ -11,3 +11,8 @@ figure/raw-*.glb
 figure/figure-full-*.glb
 figure/source.png
 figure/input*.png
+museum/*.log
+museum/raw-*.glb
+museum/mesh-*.glb
+museum/source.png
+museum/input*.png
