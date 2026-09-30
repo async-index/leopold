@@ -1,5 +1,8 @@
 [
  {
+  "plain": true
+ },
+ {
   "src": "textures/web-lm-02259-default.jpg",
   "title": "Blick ins weite Land",
   "artist": "Friedrich Gauermann",
@@ -40,8 +43,5 @@
   "title": "Liegender Frauenakt mit aufgestützten Beinen",
   "artist": "Anton Hanak",
   "date": "um 1915"
- },
- {
-  "plain": true
  }
 ]

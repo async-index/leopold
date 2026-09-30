@@ -20,6 +20,11 @@
   .arrow:hover { opacity: .6; }
   .arrow.prev { left: 16px; }
   .arrow.next { right: 16px; }
+  .mode { position: fixed; top: 9px; right: 18px; padding: 5px 6px; border: 0; background: none; color: var(--fg);
+    font: 9px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: -0.02em; text-transform: uppercase; cursor: pointer; }
+  .mode:hover { opacity: .6; }
+  body.grid canvas { cursor: default; }
+  body.grid .hint, body.grid .arrow { display: none; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -31,6 +36,7 @@
 <body>
 <div class="hint">Drag to rotate · Scroll to zoom · Right-drag to move</div>
 <div class="caption"><span id="title"></span><span>·</span><span id="artist"></span><span>·</span><span id="date"></span></div>
+<button class="mode" id="mode">Grid</button>
 <button class="arrow prev" id="prev" aria-label="Previous image"><svg viewBox="0 0 9 9"><path d="M5 1 1.5 4.5 5 8M1.5 4.5H9" fill="none" stroke="currentColor"/></svg></button>
 <button class="arrow next" id="next" aria-label="Next image"><svg viewBox="0 0 9 9"><path d="M4 1l3.5 3.5L4 8M7.5 4.5H0" fill="none" stroke="currentColor"/></svg></button>
 <script type="module">
@@ -71,30 +77,37 @@ controls.dampingFactor = 0.08;
 // Facades: the model's UVs wrap the image once around the building as one band
 // (seam at the back corner). Everything else — roof, stairs, terrace, balcony,
 // rails — carries UV (-1, -1) and gets triplanar instead: the image cast along
-// x, y and z in world space, blended by how much the surface faces each axis,
-// spanning the model's height once and mirror-repeating beyond that.
-const tri = { triMap: { value: null }, triScale: { value: 1 }, triAspect: { value: 1 } };
-const material = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0 });
-material.onBeforeCompile = shader => {
-  Object.assign(shader.uniforms, tri);
-  shader.vertexShader = shader.vertexShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vTriPos;\nvarying vec3 vTriNormal;\nvarying vec2 vBandUv;')
-    .replace('#include <begin_vertex>', `#include <begin_vertex>
-      vTriPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-      vTriNormal = normalize(mat3(modelMatrix) * objectNormal);
-      vBandUv = uv;`);
-  shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', `#include <common>
-      uniform sampler2D triMap; uniform float triScale; uniform float triAspect;
-      varying vec3 vTriPos; varying vec3 vTriNormal; varying vec2 vBandUv;
-      vec4 triSample(vec2 p) { return texture2D(triMap, p * triScale * vec2(1.0 / triAspect, 1.0) + 0.5); }`)
-    .replace('#include <map_fragment>', `
-      vec3 tw = pow(abs(normalize(vTriNormal)), vec3(4.0));
-      tw /= tw.x + tw.y + tw.z;
-      vec4 triColor = triSample(vTriPos.zy) * tw.x + triSample(vTriPos.xz) * tw.y + triSample(vTriPos.xy) * tw.z;
-      vec4 bandColor = texture2D(triMap, vec2(vBandUv.x, 1.0 - vBandUv.y));
-      diffuseColor *= vBandUv.x < -0.5 ? triColor : bandColor;`);
-};
+// x, y and z, blended by how much the surface faces each axis, spanning the
+// model's height once and mirror-repeating beyond that. Triplanar runs in the
+// model's own (centred) space, so moved or turned copies keep their artwork.
+function makeMaterial() {
+  const u = { triMap: { value: null }, triScale: { value: 1 }, triAspect: { value: 1 },
+    triNode: { value: new THREE.Matrix4() }, triOffset: { value: new THREE.Vector3() } };
+  const m = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0 });
+  m.onBeforeCompile = shader => {
+    Object.assign(shader.uniforms, u);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform mat4 triNode; uniform vec3 triOffset;\nvarying vec3 vTriPos;\nvarying vec3 vTriNormal;\nvarying vec2 vBandUv;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vTriPos = (triNode * vec4(transformed, 1.0)).xyz + triOffset;
+        vTriNormal = normalize(mat3(triNode) * objectNormal);
+        vBandUv = uv;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform sampler2D triMap; uniform float triScale; uniform float triAspect;
+        varying vec3 vTriPos; varying vec3 vTriNormal; varying vec2 vBandUv;
+        vec4 triSample(vec2 p) { return texture2D(triMap, p * triScale * vec2(1.0 / triAspect, 1.0) + 0.5); }`)
+      .replace('#include <map_fragment>', `
+        vec3 tw = pow(abs(normalize(vTriNormal)), vec3(4.0));
+        tw /= tw.x + tw.y + tw.z;
+        vec4 triColor = triSample(vTriPos.zy) * tw.x + triSample(vTriPos.xz) * tw.y + triSample(vTriPos.xy) * tw.z;
+        vec4 bandColor = texture2D(triMap, vec2(vBandUv.x, 1.0 - vBandUv.y));
+        diffuseColor *= vBandUv.x < -0.5 ? triColor : bandColor;`);
+  };
+  return { material: m, uniforms: u };
+}
+const single = makeMaterial();
+const tri = single.uniforms;
 
 const works = await (await fetch('textures/works.json')).json();
 const textures = new Map();
@@ -110,61 +123,166 @@ const loadTexture = src => {
 // a works.json entry with "plain": true shows the bare model: white map, no caption
 const plain = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
 plain.needsUpdate = true;
+const setMap = (u, t) => { u.triMap.value = t; u.triAspect.value = t.image.width / t.image.height; };
+const textureFor = w => w.plain ? Promise.resolve(plain) : loadTexture(w.src);
+const setCaption = w => {
+  document.querySelector('.caption').style.visibility = !w || w.plain ? 'hidden' : '';
+  document.getElementById('title').textContent = w?.title ?? '';
+  document.getElementById('artist').textContent = w?.artist ?? '';
+  document.getElementById('date').textContent = w?.date ?? '';
+};
 let current = 0;
 async function show(i) {
   current = (i + works.length) % works.length;
   const w = works[current];
   const t = w.plain ? plain : await loadTexture(w.src);
   if (works[current] !== w) return; // a later click won
-  tri.triMap.value = t;
-  tri.triAspect.value = t.image.width / t.image.height;
-  document.querySelector('.caption').style.visibility = w.plain ? 'hidden' : '';
-  document.getElementById('title').textContent = w.title ?? '';
-  document.getElementById('artist').textContent = w.artist ?? '';
-  document.getElementById('date').textContent = w.date ?? '';
+  setMap(tri, t);
+  setCaption(w);
   const next = works[(current + 1) % works.length];
   if (!next.plain) loadTexture(next.src);
 }
 document.getElementById('prev').onclick = () => show(current - 1);
 document.getElementById('next').onclick = () => show(current + 1);
 addEventListener('keydown', e => {
+  if (gridMode) return;
   if (e.key === 'ArrowLeft') show(current - 1);
   else if (e.key === 'ArrowRight') show(current + 1);
 });
 await show(0);
 
+let model, size, centre, singleView;
 new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('museum.glb', gltf => {
-  const model = gltf.scene;
-  model.traverse(o => { if (o.isMesh) { o.material = material; o.castShadow = o.receiveShadow = true; if (!o.geometry.attributes.normal) o.geometry.computeVertexNormals(); } });
+  model = gltf.scene;
+  model.traverse(o => { if (o.isMesh) { o.material = single.material; o.castShadow = o.receiveShadow = true; if (!o.geometry.attributes.normal) o.geometry.computeVertexNormals(); } });
   const box = new THREE.Box3().setFromObject(model);
-  const size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
+  size = box.getSize(new THREE.Vector3()); centre = box.getCenter(new THREE.Vector3());
   model.position.sub(centre);
   scene.add(model);
+  model.updateMatrixWorld();
+  const mesh = model.getObjectByProperty('isMesh', true);
   tri.triScale.value = 1 / size.y;
-  // shadow frustum fitted to the model (keeps the light's direction, places it outside the model)
-  const r0 = size.length() / 2;
-  key.position.normalize().multiplyScalar(r0 * 2);
-  Object.assign(key.shadow.camera, { left: -r0, right: r0, top: r0, bottom: -r0, near: r0 * 0.5, far: r0 * 3.5 });
-  key.shadow.camera.updateProjectionMatrix();
-  key.shadow.bias = -0.0002; key.shadow.normalBias = r0 * 0.002;
-  // frame like the source image: building ~85% of the view width, ~60% of its height
+  tri.triNode.value.copy(mesh.matrix);        // mesh node transform (gltfpack's dequantisation)
+  tri.triOffset.value.copy(centre).negate();  // centred, as in the single view
+  fitShadow(size.length() / 2);
+  key.shadow.bias = -0.0002; key.shadow.normalBias = size.length() / 2 * 0.002;
+  // frame like the source image (building ~85% of the view width, ~60% of its height), then pulled back a bit
   const r = size.length() / 2;
   const halfFov = THREE.MathUtils.degToRad(camera.fov / 2);
-  const dist = 0.9 * (Math.max(size.y / 2 / 0.6, size.x / 2 / 0.85 / camera.aspect) / Math.tan(halfFov) + size.z / 2);
+  const dist = 1.05 * (Math.max(size.y / 2 / 0.6, size.x / 2 / 0.85 / camera.aspect) / Math.tan(halfFov) + size.z / 2);
   // start at the source image's three-quarter view
   const az = THREE.MathUtils.degToRad(-38), el = THREE.MathUtils.degToRad(4);
   camera.position.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(dist);
   camera.near = dist / 100; camera.far = dist * 10; camera.updateProjectionMatrix();
   controls.minDistance = r * 0.6; controls.maxDistance = dist * 3;
   controls.update();
+  singleView = { position: camera.position.clone(), target: controls.target.clone() };
   window.READY = true;
+});
+
+// shadow frustum fitted to a radius around the origin (keeps the light's direction)
+function fitShadow(r) {
+  key.position.normalize().multiplyScalar(r * 2);
+  Object.assign(key.shadow.camera, { left: -r, right: r, top: r, bottom: -r, near: r * 0.5, far: r * 3.5 });
+  key.shadow.camera.updateProjectionMatrix();
+}
+
+// ---- grid: 3 x 3 museums facing the camera like the single view, artworks in list order ----
+const COLS = 3, ROWS = 3, TURN = THREE.MathUtils.degToRad(15), TILT = THREE.MathUtils.degToRad(5);
+let gridMode = false, grid = null, hovered = null;
+const pointer = new THREE.Vector2(), raycaster = new THREE.Raycaster();
+function buildGrid() {
+  const group = new THREE.Group(), cells = [];
+  const mesh = model.getObjectByProperty('isMesh', true);
+  for (let i = 0; i < COLS * ROWS; i++) {
+    const w = works[i % works.length], mat = makeMaterial();
+    Object.assign(mat.uniforms.triScale, { value: tri.triScale.value });
+    mat.uniforms.triNode.value.copy(tri.triNode.value); mat.uniforms.triOffset.value.copy(tri.triOffset.value);
+    textureFor(w).then(t => setMap(mat.uniforms, t));
+    const copy = model.clone();
+    copy.position.copy(centre).negate();            // pivot sits at the model's centre
+    copy.traverse(o => { if (o.isMesh) o.material = mat.material; });
+    const pivot = new THREE.Group(); pivot.add(copy);
+    pivot.userData = { work: w, target: new THREE.Euler() };
+    group.add(pivot); cells.push(pivot);
+  }
+  return { group, cells };
+}
+function layoutGrid() {
+  // lay the cells out in the plane facing the single-view camera
+  const dir = singleView.position.clone().sub(singleView.target).normalize();
+  const right = new THREE.Vector3(0, 1, 0).cross(dir).normalize(), up = dir.clone().cross(right);
+  const sx = Math.hypot(size.x, size.z) * 1.08, sy = size.y * 1.9;
+  grid.cells.forEach((p, i) => {
+    const c = i % COLS - (COLS - 1) / 2, r = Math.floor(i / COLS) - (ROWS - 1) / 2;
+    p.position.copy(right).multiplyScalar(c * sx).addScaledVector(up, -r * sy);
+  });
+  const halfFov = THREE.MathUtils.degToRad(camera.fov / 2);
+  const w = COLS * sx, h = ROWS * sy;
+  const dist = 1.08 * Math.max(h / 2 / Math.tan(halfFov), w / 2 / Math.tan(halfFov) / camera.aspect);
+  camera.position.copy(dir).multiplyScalar(dist);
+  camera.lookAt(0, 0, 0);
+  camera.near = dist / 100; camera.far = dist * 10; camera.updateProjectionMatrix();
+  fitShadow(Math.hypot(w, h) / 2 + size.length() / 2);
+}
+function setGrid(on) {
+  gridMode = on;
+  document.body.classList.toggle('grid', on);
+  document.getElementById('mode').textContent = on ? 'Single' : 'Grid';
+  if (on) {
+    grid ??= buildGrid();
+    scene.remove(model); scene.add(grid.group);
+    controls.enabled = false;
+    layoutGrid();
+    hovered = null; setCaption(null);
+  } else {
+    scene.remove(grid.group); scene.add(model);
+    grid.cells.forEach(p => { p.rotation.set(0, 0, 0); p.userData.target.set(0, 0, 0); });
+    camera.position.copy(singleView.position); controls.target.copy(singleView.target);
+    controls.enabled = true; controls.update();
+    fitShadow(size.length() / 2);
+    show(current);
+  }
+}
+document.getElementById('mode').onclick = () => { if (window.READY) setGrid(!gridMode); };
+renderer.domElement.addEventListener('pointermove', e => {
+  if (!gridMode) return;
+  pointer.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects(grid.cells, true)[0];
+  let cell = hit?.object; while (cell && !grid.cells.includes(cell)) cell = cell.parent;
+  if (cell !== hovered) {
+    if (hovered) hovered.userData.target.set(0, 0, 0);
+    hovered = cell ?? null;
+    setCaption(hovered?.userData.work);
+  }
+  if (hovered) {
+    // turn toward the cursor: offset from the museum's on-screen centre, in cell widths
+    const c = hovered.getWorldPosition(new THREE.Vector3()).project(camera);
+    const dx = THREE.MathUtils.clamp((pointer.x - c.x) * COLS / 2, -1, 1);
+    const dy = THREE.MathUtils.clamp((pointer.y - c.y) * ROWS / 2, -1, 1);
+    hovered.userData.target.set(-dy * TILT, dx * TURN, 0);
+  }
+});
+renderer.domElement.addEventListener('pointerleave', () => {
+  if (hovered) hovered.userData.target.set(0, 0, 0);
+  hovered = null; if (gridMode) setCaption(null);
 });
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  if (gridMode) layoutGrid();
 });
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+renderer.setAnimationLoop(() => {
+  if (gridMode) grid.cells.forEach(p => {       // ease each museum toward its target turn
+    const t = p.userData.target;
+    p.rotation.x += (t.x - p.rotation.x) * 0.08;
+    p.rotation.y += (t.y - p.rotation.y) * 0.08;
+  });
+  else controls.update();
+  renderer.render(scene, camera);
+});
 </script>
 </body>
 </html>
