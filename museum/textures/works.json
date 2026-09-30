@@ -1,44 +1,47 @@
 [
  {
-  "src": "textures/web-lm-00455-default.jpg",
-  "title": "„Liebkosung“ (Kardinal und Nonne)",
+  "src": "textures/web-lm-02259-default.jpg",
+  "title": "Blick ins weite Land",
+  "artist": "Friedrich Gauermann",
+  "date": "1830–40"
+ },
+ {
+  "src": "textures/web-lm-01392-default.jpg",
+  "title": "Liegende mit roten Strumpfbändern",
   "artist": "Egon Schiele",
-  "date": "1912"
+  "date": "1913"
  },
  {
-  "src": "textures/web-lm-00652-default.jpg",
-  "title": "Mutter und Kind",
+  "src": "textures/web-lm-00096-default.jpg",
+  "title": "Leysin (Le Chamossaire)",
+  "artist": "Koloman Moser",
+  "date": "1913"
+ },
+ {
+  "src": "textures/web-lm-01975-default.jpg",
+  "title": "Die Reisigsammlerinnen",
+  "artist": "Theodor von Hörmann",
+  "date": "um 1892"
+ },
+ {
+  "src": "textures/web-lm-01748-default.jpg",
+  "title": "Landschaft mit Burg",
+  "artist": "Thomas Ender",
+  "date": "um 1830"
+ },
+ {
+  "src": "textures/web-lm-01413-default.jpg",
+  "title": "Alter Giebel",
   "artist": "Egon Schiele",
-  "date": "1912"
+  "date": "1913"
  },
  {
-  "src": "textures/web-lm-00626-default.jpg",
-  "title": "„Liegende Frau“",
-  "artist": "Egon Schiele",
-  "date": "1917"
+  "src": "textures/web-lm-01253-default.jpg",
+  "title": "Liegender Frauenakt mit aufgestützten Beinen",
+  "artist": "Anton Hanak",
+  "date": "um 1915"
  },
  {
-  "src": "textures/web-lm-00267-default.jpg",
-  "title": "Pappelallee – Landschaft mit Eisenbahn",
-  "artist": "Olga Wisinger-Florian",
-  "date": "1901"
- },
- {
-  "src": "textures/web-lm-00130-default.jpg",
-  "title": "Pappelallee bei Plankenberg",
-  "artist": "Emil Jakob Schindler",
-  "date": "um 1890"
- },
- {
-  "src": "textures/web-lm-00138-default.jpg",
-  "title": "Garten mit Sonnenblumen",
-  "artist": "Eugen Jettel",
-  "date": "1885"
- },
- {
-  "src": "textures/web-lm-01290-default.jpg",
-  "title": "Sitzender weiblicher Halbakt in gemustertem Kleid, den Kopf auf das rechte Knie gestützt",
-  "artist": "Gustav Klimt",
-  "date": "1910"
+  "plain": true
  }
 ]
