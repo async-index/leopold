@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leopold Grid</title>
+<style>
+  :root { --white: #f9f9f9; --black: #171717; --margin: 24px; --font: ui-monospace, "SF Mono", Menlo, monospace; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; background: var(--white); color: var(--black);
+    font: 9px/1 var(--font); letter-spacing: -0.02em; text-transform: uppercase; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; display: block; }
+
+  nav { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex; justify-content: space-between;
+    align-items: center; padding: 13px var(--margin) 10px; pointer-events: none; }
+  nav > * { pointer-events: auto; }
+  .zoom { display: flex; align-items: center; gap: 6px; }
+  .zoom span { margin-right: 10px; }
+  nav button { width: 18px; height: 18px; border: 1px solid var(--black); background: var(--white); color: var(--black);
+    font: 12px/1 var(--font); cursor: pointer; padding: 0; }
+  .close { background: none; border: 0; width: auto; height: auto; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+  .close:hover { opacity: .6; }
+  body.working .zoom, body:not(.working) .close { display: none; }
+  nav, .loading-text, .hint { visibility: hidden; }
+  body.ready nav { visibility: visible; }
+
+  .loading-text { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; opacity: .4; pointer-events: none; }
+  body.loading .loading-text { visibility: visible; }
+  .hint { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 8px 16px; background: var(--white);
+    white-space: nowrap; pointer-events: none; opacity: 0; }
+  .hint.show { visibility: visible; animation: hint 4s ease forwards; }
+  @keyframes hint { 0% { opacity: 0; } 15% { opacity: .9; } 70% { opacity: .9; } 100% { opacity: 0; } }
+
+  .work { position: fixed; inset: 0; z-index: 9; background: rgba(249, 249, 249, .97); opacity: 0; transition: opacity .6s; }
+  .work.open { opacity: 1; }
+  .work__page { position: absolute; inset: 0; view-transition-name: work-page; }
+  .work__stage { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: calc(100% - 144px);
+    height: 70vh; display: flex; align-items: center; justify-content: center; }
+  .work__stage img { max-width: 100%; max-height: 100%; object-fit: contain; opacity: 0; transition: opacity .3s; position: relative; }
+  .work__stage img.loaded { opacity: 1; }
+  .work__stage .loading-text { position: absolute; visibility: visible; }
+  .work__caption { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); width: 100%; padding: 0 var(--margin);
+    display: flex; gap: 8px; justify-content: center; line-height: 180%; text-align: center; }
+  .work__caption h1 { font: inherit; }
+  .work__half { position: absolute; top: 15vh; bottom: 15vh; width: 50%; }
+  .work__half.prev { left: 0; cursor: w-resize; }
+  .work__half.next { right: 0; cursor: e-resize; }
+  .work__arrow { position: absolute; top: 50%; width: 9px; height: 9px; margin-top: -4.5px; pointer-events: none; }
+  .work__arrow.prev { left: var(--margin); }
+  .work__arrow.next { right: var(--margin); }
+
+  @keyframes out-left { to { transform: translate(-100%); } }
+  @keyframes in-right { from { transform: translate(100%); } }
+  @keyframes out-right { to { transform: translate(100%); } }
+  @keyframes in-left { from { transform: translate(-100%); } }
+  [data-dir="next"]::view-transition-old(work-page) { animation: .35s ease-out both out-left; }
+  [data-dir="next"]::view-transition-new(work-page) { animation: .35s ease-out both in-right; }
+  [data-dir="prev"]::view-transition-old(work-page) { animation: .35s ease-out both out-right; }
+  [data-dir="prev"]::view-transition-new(work-page) { animation: .35s ease-out both in-left; }
+</style>
+</head>
+<body class="loading">
+<canvas id="grid"></canvas>
+<nav>
+  <div>Leopold Sammlung</div>
+  <div class="zoom"><span>Zoom</span><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button></div>
+  <button class="close" id="close">Close</button>
+</nav>
+<div class="loading-text">Loading</div>
+<div class="hint" id="hint">Drag and move around to navigate</div>
+<div class="work" id="work" hidden>
+  <div class="work__page">
+    <div class="work__stage"><span class="loading-text">Loading</span><img id="workImg" alt=""></div>
+    <div class="work__caption"><h1 id="workTitle"></h1><span>·</span><p id="workArtist"></p><span>·</span><p id="workDate"></p></div>
+  </div>
+  <div class="work__half prev" id="prev"></div>
+  <div class="work__half next" id="next"></div>
+  <svg class="work__arrow prev" viewBox="0 0 9 9"><path d="M5 1 1.5 4.5 5 8M1.5 4.5H9" fill="none" stroke="currentColor"/></svg>
+  <svg class="work__arrow next" viewBox="0 0 9 9"><path d="M4 1l3.5 3.5L4 8M7.5 4.5H0" fill="none" stroke="currentColor"/></svg>
+</div>
+<script src="data.js"></script>
+<script>
+// --- tuning (motion constants are the reference site's own) ---
+const COLS = 56;            // grid columns across the shape's width
+const FILL = 0.3;           // share of a cell the shape must cover to get a tile
+const GAP = 0.1;            // gap between tiles, as a share of the cell
+const BASE = 60;            // px per cell at zoom 1
+const ZOOM_DEFAULT = 1.5, ZOOM_MAX = 5, ZOOM_STEP = 1.5;
+const LERP = 0.15;          // glide: share of remaining distance per frame
+const THROW = 10;           // drag release: frames of velocity added to target
+const IDLE_MS = 7000, IDLE_ANIM = 1200;
+const INTRO_FADE = 1500, INTRO_PAUSE = 400, INTRO_ZOOM = 1800;
+const HOVER_MS = 250, HOVER_ALPHA = 0.6;
+const THUMB = 192;          // px of thumbs/; closer than this loads images/
+
+// --- shape → cell mask ---
+const { shape, works } = window.DATA;
+const [vx, vy, vw, vh] = shape.viewBox;
+const unit = vw / COLS;
+const ROWS = Math.ceil(vh / unit);
+const PADC = Math.floor(COLS * 0.2), PADR = Math.floor(ROWS * 0.2);
+const SS = 8;
+const mc = document.createElement('canvas');
+mc.width = COLS * SS; mc.height = ROWS * SS;
+const mctx = mc.getContext('2d', { willReadFrequently: true });
+mctx.scale(SS / unit, SS / unit);
+mctx.translate(-vx, -vy);
+for (const d of shape.paths) mctx.fill(new Path2D(d));
+const px = mctx.getImageData(0, 0, mc.width, mc.height).data;
+const cells = [], byPos = new Map();
+for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+  let n = 0;
+  for (let y = 0; y < SS; y++) for (let x = 0; x < SS; x++)
+    if (px[(((r * SS + y) * mc.width) + c * SS + x) * 4 + 3] > 127) n++;
+  if (n / (SS * SS) < FILL) continue;
+  const cell = { c, r, i: cells.length, w: works[cells.length % works.length], thumb: null, hi: null };
+  cells.push(cell); byPos.set(c + ',' + r, cell);
+}
+{ // reveal order: distance from the shape's centre, 0..1
+  const d = cells.map(k => Math.hypot(k.c + .5 - COLS / 2, k.r + .5 - ROWS / 2)), max = Math.max(...d);
+  cells.forEach((k, i) => k.dist = d[i] / max);
+}
+window.CELLS = cells.length;
+
+// --- state ---
+const canvas = document.getElementById('grid');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, dpr = 1;
+let state = 'loading';          // loading → fadeIn → zoomIn → done
+let R = 1, ze = 1;              // zoom, target zoom
+let O = 0, Q = 0, pe = 0, ve = 0; // screen position of cell (0,0), and its target
+let lerp = LERP, glideRaf = null;
+let reveal = 0;
+let St = 1, stTarget = 1, speed = 0, squishRaf = null; // drag squish
+let hoverKey = null, hoverA = 1, hoverFrom = 1, hoverT0 = 0, hoverRaf = null;
+let leaveKey = null, leaveA = 1, leaveFrom = 1, leaveT0 = 0, leaveRaf = null;
+let working = null;             // cell shown in the work view
+
+const cellPx = (z = R) => BASE * z;
+const fitZoom = () => Math.min(W / ((COLS + 2 * PADC) * BASE), H / ((ROWS + 2 * PADR) * BASE));
+const ease3 = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const ease2 = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+function clampPan(x, y) {
+  const s = cellPx(), sw = COLS * s, sh = ROWS * s;
+  return {
+    x: sw <= W ? (W - sw) / 2 : Math.max(W - sw, Math.min(x, 0)),
+    y: sh <= H ? (H - sh) / 2 : Math.max(H - sh, Math.min(y, 0)),
+  };
+}
+function centre(z = R) {
+  const s = cellPx(z);
+  return { x: (W - COLS * s) / 2, y: (H - ROWS * s) / 2 };
+}
+function setCentred() { ({ x: O, y: Q } = centre()); pe = O; ve = Q; }
+// Landing view at zoom z: centred across, and shifted up the shape until the
+// visible tiles' vertical centre of mass sits at mid-screen.
+function landing(z) {
+  const s = cellPx(z), c = centre(z);
+  let best = c.y, err = Infinity;
+  for (let y = c.y; y <= c.y + ROWS * s / 2; y += s / 4) {
+    let n = 0, sum = 0;
+    for (const k of cells) {
+      const px = c.x + (k.c + .5) * s, py = y + (k.r + .5) * s;
+      if (px > 0 && px < W && py > 0 && py < H) { n++; sum += py; }
+    }
+    const e = n ? Math.abs(sum / n - H / 2) : Infinity;
+    if (e < err) { err = e; best = y; }
+  }
+  return { x: c.x, wy: (H / 2 - best) / s }; // wy: shape row placed at mid-screen
+}
+const toLanding = land => () => ({ x: centre().x, y: H / 2 - land.wy * cellPx() });
+
+// --- images ---
+function load(src) {
+  return new Promise(res => { const im = new Image(); im.onload = im.onerror = () => res(im); im.src = src; });
+}
+let renderQueued = false;
+function requestRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; render(); });
+}
+function hiFor(cell) {
+  if (!cell.hi) {
+    cell.hi = new Image();
+    cell.hi.onload = () => { cell.hi.ready = true; requestRender(); };
+    cell.hi.src = cell.w.src;
+  }
+  return cell.hi.ready ? cell.hi : null;
+}
+
+// --- render ---
+function render() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (state === 'loading') return;
+  ctx.save();
+  if (St !== 1) { ctx.translate(W / 2, H / 2); ctx.scale(St, St); ctx.translate(-W / 2, -H / 2); }
+  const s = cellPx(), g = s * GAP, t = s - g, b = 0.5;
+  const x0 = W / 2 - W / 2 / St, x1 = W / 2 + W / 2 / St, y0 = H / 2 - H / 2 / St, y1 = H / 2 + H / 2 / St;
+  const wantHi = t * dpr > THUMB * 1.15;
+  for (const cell of cells) {
+    const x = O + cell.c * s + g / 2, y = Q + cell.r * s + g / 2;
+    if (x > x1 || y > y1 || x + t < x0 || y + t < y0) continue;
+    if (state === 'fadeIn' && reveal < cell.dist * 0.7) continue;
+    const key = cell.c + ',' + cell.r;
+    ctx.globalAlpha = key === hoverKey ? hoverA : key === leaveKey ? leaveA : 1;
+    const hi = wantHi && hiFor(cell);
+    if (hi) {
+      const iw = hi.naturalWidth, ih = hi.naturalHeight, m = Math.min(iw, ih);
+      ctx.drawImage(hi, (iw - m) / 2, (ih - m) / 2, m, m, x - b, y - b, t + 2 * b, t + 2 * b);
+    } else if (cell.thumb && cell.thumb.naturalWidth) {
+      ctx.drawImage(cell.thumb, x - b, y - b, t + 2 * b, t + 2 * b);
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  if (state === 'done') { const c = clampPan(O, Q); O = pe = c.x; Q = ve = c.y; }
+  else setCentred();
+  render();
+}
+
+// --- glide toward target zoom/pan ---
+let afterGlide = null;
+function glide() {
+  const dz = ze - R, dx = pe - O, dy = ve - Q;
+  if (Math.abs(dz) > .001 || Math.abs(dx) > .5 || Math.abs(dy) > .5) {
+    R += dz * lerp;
+    let nx = O + dx * lerp, ny = Q + dy * lerp;
+    if (state === 'done') ({ x: nx, y: ny } = clampPan(nx, ny));
+    O = nx; Q = ny;
+    render();
+    glideRaf = requestAnimationFrame(glide);
+  } else {
+    R = ze; O = pe; Q = ve; render(); glideRaf = null;
+    if (afterGlide) { const f = afterGlide; afterGlide = null; f(); }
+  }
+}
+function startGlide() { cancelAnimationFrame(glideRaf); glideRaf = requestAnimationFrame(glide); }
+
+function zoomTo(z) {
+  const s0 = cellPx(), s1 = cellPx(z);
+  const wx = (W / 2 - O) / s0, wy = (H / 2 - Q) / s0;
+  pe = W / 2 - wx * s1; ve = H / 2 - wy * s1; ze = z;
+  startGlide();
+}
+function centreOn(cell) {
+  const s = cellPx();
+  pe = W / 2 - (cell.c + .5) * s; ve = H / 2 - (cell.r + .5) * s;
+  startGlide();
+}
+
+// timed tween of zoom + pan (intro, idle)
+let tweenRaf = null;
+function tween(ms, toR, toXY, done) {
+  cancelAnimationFrame(tweenRaf); cancelAnimationFrame(glideRaf); glideRaf = null;
+  const r0 = R, x0 = O, y0 = Q, t0 = performance.now();
+  const step = now => {
+    const p = Math.min(1, (now - t0) / ms), e = ease3(p);
+    R = r0 + (toR - r0) * e;
+    const to = toXY();
+    O = x0 + (to.x - x0) * e; Q = y0 + (to.y - y0) * e; pe = O; ve = Q;
+    render();
+    if (p < 1) tweenRaf = requestAnimationFrame(step);
+    else { tweenRaf = null; R = ze = toR; done && done(); }
+  };
+  tweenRaf = requestAnimationFrame(step);
+}
+
+// --- drag squish ---
+function squish() {
+  speed *= .85;
+  stTarget = 1 - Math.min(speed * .01, 1) * .2;
+  St += (stTarget - St) * .08;
+  render();
+  if (dragging || Math.abs(1 - St) > 5e-4) squishRaf = requestAnimationFrame(squish);
+  else { squishRaf = null; St = 1; render(); }
+}
+
+// --- hover ---
+function animateHover() {
+  const p = Math.min(1, (performance.now() - hoverT0) / HOVER_MS);
+  hoverA = hoverFrom + (HOVER_ALPHA - hoverFrom) * ease2(p);
+  render();
+  hoverRaf = p < 1 ? requestAnimationFrame(animateHover) : null;
+}
+function animateLeave() {
+  const p = Math.min(1, (performance.now() - leaveT0) / HOVER_MS);
+  leaveA = leaveFrom + (1 - leaveFrom) * ease2(p);
+  render();
+  if (p < 1) leaveRaf = requestAnimationFrame(animateLeave); else { leaveRaf = null; leaveKey = null; }
+}
+function setHover(key) {
+  if (key === hoverKey) return;
+  if (hoverKey) {
+    cancelAnimationFrame(leaveRaf);
+    leaveKey = hoverKey; leaveA = leaveFrom = hoverA; leaveT0 = performance.now();
+    leaveRaf = requestAnimationFrame(animateLeave);
+  }
+  cancelAnimationFrame(hoverRaf); hoverRaf = null;
+  hoverKey = key;
+  if (!key) return;
+  let from = 1;
+  if (leaveKey === key) { from = leaveA; leaveKey = null; cancelAnimationFrame(leaveRaf); leaveRaf = null; }
+  hoverA = hoverFrom = from; hoverT0 = performance.now();
+  hoverRaf = requestAnimationFrame(animateHover);
+}
+
+function cellAt(clientX, clientY) {
+  const s = cellPx(), gx = (clientX - O) / s, gy = (clientY - Q) / s;
+  const cell = byPos.get(Math.floor(gx) + ',' + Math.floor(gy));
+  if (!cell) return null;
+  const fx = gx - cell.c, fy = gy - cell.r;
+  return fx >= GAP / 2 && fx <= 1 - GAP / 2 && fy >= GAP / 2 && fy <= 1 - GAP / 2 ? cell : null;
+}
+
+// --- idle: zoom out to the whole shape, come back on input ---
+let idle = false, idleTimer = null, saved = null;
+function activity(exit = true) {
+  if (state !== 'done' || working) return;
+  if (exit && idle) exitIdle();
+  if (!exit && idle) return;
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(enterIdle, IDLE_MS);
+}
+function enterIdle() {
+  if (dragging) return activity();
+  idle = true; saved = { R, O, Q };
+  setHover(null);
+  const L = fitZoom();
+  tween(IDLE_ANIM, L, () => centre(), null);
+}
+function exitIdle() {
+  idle = false;
+  let toR, toXY;
+  if (saved.R < ZOOM_DEFAULT) { toR = ZOOM_DEFAULT; toXY = toLanding(landing(toR)); }
+  else { toR = saved.R; const s = { x: saved.O, y: saved.Q }; toXY = () => s; }
+  tween(IDLE_ANIM, toR, toXY, null);
+}
+
+// --- pointer: drag, throw, click, hover, pinch ---
+let dragging = false, moved = false, swallowClick = false;
+let sx = 0, sy = 0, so = 0, sq = 0, lastT = 0, velX = 0, velY = 0;
+const pointers = new Map();
+let pinch = null;
+
+canvas.addEventListener('pointerdown', e => {
+  if (state !== 'done' || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  canvas.setPointerCapture(e.pointerId);
+  if (idle || tweenRaf) { swallowClick = true; activity(); return; }
+  activity();
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    dragging = false;
+    pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), r: R };
+    return;
+  }
+  swallowClick = false; dragging = true; moved = false;
+  sx = e.clientX; sy = e.clientY; so = O; sq = Q; lastT = Date.now(); velX = velY = 0;
+  cancelAnimationFrame(glideRaf); glideRaf = null;
+  speed = 0;
+  if (!squishRaf) squishRaf = requestAnimationFrame(squish);
+  canvas.style.cursor = 'grabbing';
+});
+
+canvas.addEventListener('pointermove', e => {
+  if (state !== 'done') return;
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    const z = Math.min(ZOOM_MAX, Math.max(fitZoom(), pinch.r * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d));
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, s0 = cellPx(), s1 = cellPx(z);
+    O = pe = mx - (mx - O) / s0 * s1; Q = ve = my - (my - Q) / s0 * s1; R = ze = z;
+    render(); return;
+  }
+  if (dragging) {
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (!moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) { moved = true; setHover(null); }
+    if (moved) {
+      const c = clampPan(so + dx, sq + dy), now = Date.now(), dt = now - lastT;
+      if (dt > 0) { velX = (c.x - O) / dt * 16; velY = (c.y - Q) / dt * 16; }
+      lastT = now; O = pe = c.x; Q = ve = c.y;
+      speed = Math.max(speed, Math.hypot(velX, velY));
+      render();
+    }
+    return;
+  }
+  activity(false);
+  if (e.pointerType !== 'mouse' || idle || working) return;
+  const cell = cellAt(e.clientX, e.clientY);
+  setHover(cell ? cell.c + ',' + cell.r : null);
+  canvas.style.cursor = cell ? 'pointer' : 'grab';
+});
+
+function release(e) {
+  pointers.delete(e.pointerId);
+  if (pinch) { if (pointers.size < 2) pinch = null; return; }
+  if (!dragging) return;
+  dragging = false;
+  canvas.style.cursor = 'grab';
+  if (Math.abs(velX) > .5 || Math.abs(velY) > .5) {
+    const c = clampPan(O + velX * THROW, Q + velY * THROW);
+    pe = c.x; ve = c.y;
+  }
+  startGlide();
+}
+canvas.addEventListener('pointerup', release);
+canvas.addEventListener('pointercancel', release);
+canvas.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !dragging) { setHover(null); canvas.style.cursor = 'grab'; } });
+
+canvas.addEventListener('click', e => {
+  if (state !== 'done' || moved) return;
+  if (swallowClick) { swallowClick = false; return; }
+  const cell = cellAt(e.clientX, e.clientY);
+  if (cell) openWork(cell);
+});
+
+// scroll pans; pinch on a trackpad (ctrl+wheel) zooms at the cursor
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (state !== 'done') return;
+  activity();
+  if (idle || tweenRaf) return;
+  const k = e.deltaMode === 1 ? 16 : 1;
+  if (e.ctrlKey) {
+    const z = Math.min(ZOOM_MAX, Math.max(fitZoom(), R * Math.exp(-e.deltaY * k * 0.01)));
+    const s0 = cellPx(), s1 = cellPx(z);
+    O = e.clientX - (e.clientX - O) / s0 * s1; Q = e.clientY - (e.clientY - Q) / s0 * s1; R = ze = z;
+  } else { O -= e.deltaX * k; Q -= e.deltaY * k; }
+  cancelAnimationFrame(glideRaf); glideRaf = null;
+  const c = clampPan(O, Q); O = pe = c.x; Q = ve = c.y;
+  render();
+}, { passive: false });
+
+document.getElementById('zin').onclick = () => { if (state === 'done' && !idle) zoomTo(Math.min(ZOOM_MAX, ze * ZOOM_STEP)); };
+document.getElementById('zout').onclick = () => { if (state === 'done' && !idle) zoomTo(Math.max(fitZoom(), ze / ZOOM_STEP)); };
+addEventListener('mousedown', () => activity());
+addEventListener('touchstart', () => activity());
+
+// --- work view ---
+const work = document.getElementById('work'), workImg = document.getElementById('workImg');
+function fillWork(cell) {
+  const w = cell.w;
+  workImg.classList.remove('loaded');
+  workImg.onload = () => workImg.classList.add('loaded');
+  workImg.onerror = () => { if (workImg.src !== new URL(w.src, location.href).href) workImg.src = w.src; };
+  workImg.src = w.full;
+  workImg.alt = w.title;
+  document.getElementById('workTitle').textContent = w.title;
+  document.getElementById('workArtist').textContent = w.artist;
+  document.getElementById('workDate').textContent = w.date;
+}
+function openWork(cell) {
+  working = cell;
+  clearTimeout(idleTimer);
+  setHover(null);
+  centreOn(cell);
+  fillWork(cell);
+  canvas.style.filter = 'grayscale(1) contrast(4)';
+  document.body.classList.add('working');
+  work.hidden = false;
+  requestAnimationFrame(() => requestAnimationFrame(() => work.classList.add('open')));
+}
+function closeWork() {
+  if (!working) return;
+  working = null;
+  work.classList.remove('open');
+  document.body.classList.remove('working');
+  canvas.style.filter = '';
+  setTimeout(() => { if (!working) work.hidden = true; }, 600);
+  activity();
+}
+function step(dir) {
+  if (!working) return;
+  const next = cells[(working.i + (dir === 'next' ? 1 : -1) + cells.length) % cells.length];
+  working = next;
+  centreOn(next);
+  if (document.startViewTransition) {
+    document.documentElement.dataset.dir = dir;
+    document.startViewTransition(() => fillWork(next));
+  } else fillWork(next);
+}
+document.getElementById('close').onclick = closeWork;
+document.getElementById('prev').onclick = () => step('prev');
+document.getElementById('next').onclick = () => step('next');
+addEventListener('keydown', e => {
+  activity();
+  if (!working) return;
+  if (e.key === 'Escape') closeWork();
+  else if (e.key === 'ArrowLeft') step('prev');
+  else if (e.key === 'ArrowRight') step('next');
+});
+
+// --- intro: load, reveal from the centre, zoom in ---
+addEventListener('resize', resize);
+resize();
+Promise.all(cells.map(cell => load(cell.w.thumb).then(im => cell.thumb = im))).then(() => {
+  document.body.classList.remove('loading');
+  R = ze = fitZoom(); setCentred();
+  state = 'fadeIn';
+  canvas.style.opacity = '0';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    canvas.style.transition = 'opacity .8s ease';
+    canvas.style.opacity = '1';
+    const t0 = performance.now();
+    const fade = now => {
+      reveal = Math.min(1, (now - t0) / INTRO_FADE);
+      render();
+      if (reveal < 1) return requestAnimationFrame(fade);
+      setTimeout(() => {
+        state = 'zoomIn';
+        tween(INTRO_ZOOM, ZOOM_DEFAULT, toLanding(landing(ZOOM_DEFAULT)), () => {
+          state = 'done';
+          document.body.classList.add('ready');
+          document.getElementById('hint').classList.add('show');
+          activity();
+        });
+      }, INTRO_PAUSE);
+    };
+    requestAnimationFrame(fade);
+  }));
+});
+</script>
+</body>
+</html>

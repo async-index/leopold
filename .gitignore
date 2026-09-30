@@ -1,0 +1,13 @@
+.DS_Store
+.playwright-mcp/
+# full-size downloads, only used locally to build thumbs/
+images/
+# 3D generation tooling and intermediates (~6.5 GB)
+figure/.venv/
+figure/models/
+figure/hy3d/
+figure/*.log
+figure/raw-*.glb
+figure/figure-full-*.glb
+figure/source.png
+figure/input*.png

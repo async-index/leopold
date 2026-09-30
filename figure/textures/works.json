@@ -1,0 +1,44 @@
+[
+ {
+  "src": "textures/web-lm-00454-default.jpg",
+  "title": "Selbstbildnis mit Lampionfrüchten",
+  "artist": "Egon Schiele",
+  "date": "1912"
+ },
+ {
+  "src": "textures/web-lm-00453-default.jpg",
+  "title": "Bildnis Wally Neuzil",
+  "artist": "Egon Schiele",
+  "date": "1912"
+ },
+ {
+  "src": "textures/web-lm-00630-default.jpg",
+  "title": "Tod und Leben",
+  "artist": "Gustav Klimt",
+  "date": "1910/11, umgearbeitet 1912/13 und 1915/16"
+ },
+ {
+  "src": "textures/web-lm-00466-default.jpg",
+  "title": "„Eremiten“",
+  "artist": "Egon Schiele",
+  "date": "1912"
+ },
+ {
+  "src": "textures/web-lm-00456-default.jpg",
+  "title": "Der Häuserbogen II („Inselstadt“)",
+  "artist": "Egon Schiele",
+  "date": "1915"
+ },
+ {
+  "src": "textures/web-lm-04148-default.jpg",
+  "title": "Am Attersee",
+  "artist": "Gustav Klimt",
+  "date": "1900"
+ },
+ {
+  "src": "textures/web-lm-02008-default.jpg",
+  "title": "Die große Pappel II (Aufsteigendes Gewitter)",
+  "artist": "Gustav Klimt",
+  "date": "1902/03"
+ }
+]
