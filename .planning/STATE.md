@@ -14,8 +14,9 @@ the latest round (smaller visuals, black default figure, museum shadows). Next: 
   filter (resets it to Alle); filtered sets centre in the window; zoom steps 1.4 / 1 / 0.23; overview
   shows category + title; zoom buttons grey out at the limits; no text selection while dragging.
 - Explore visuals: no post text, bigger, placed apart (figure left, museum right of centre); figure
-  starts black ("Keine Projektion"); museum plain with shadows; rotate by dragging (OrbitControls, as
-  in their own pages) — no mouse-follow effect.
+  starts black ("Keine Projektion"); museum plain with shadows; slight skew toward the cursor only while
+  hovered (camera moves, projection stays put). No drag-rotate — it fought the page's drag-to-pan;
+  no mouse-follow when not hovered.
 - Explore search: on focus, "Häufig gesucht" suggestions (tickets, hours, current/upcoming exhibitions,
   tours, kids, directions, café, shop, accessibility, contact).
 - Ring: clicked work flies out of the ring to the centre, ring stops and fades; Escape/click returns.
