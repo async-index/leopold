@@ -4,15 +4,18 @@
 Phase 2 — Explore (zoomable grid as site navigation).
 
 ## Current Focus
-Explore is live with 52 content cards plus the figure and museum visuals. Waiting on the owner's eye for
-the latest round (smaller visuals, black default figure, museum shadows). Next: whatever comes back from review.
+Explore is live: 52 content cards, figure + museum visuals (hover skew), search with "Häufig gesucht"
+suggestions, category/search resetting each other, overview with category + title, opens on PREMIERE!.
+Latest round reviewed as "ok for a first version" for the (now removed) logo view; no open requests.
+Next: owner's next direction for Explore — candidates are in Postponed.
 
 ## Decided
 - Islands/Ring/Particles use the 11 hand-picked works (`islands/build.py`) — the random collection
   sample was rejected ("not happy with the artwork selection").
-- Explore: click opens the item at every zoom step (no click-to-zoom); search ignores the category
-  filter (resets it to Alle) and picking a category clears the search (both pages); filtered sets centre in the window; zoom steps 1.4 / 1 / 0.23; overview
-  shows category + title; zoom buttons grey out at the limits; no text selection while dragging.
+- Explore: click opens the item at every zoom step (no click-to-zoom); search resets the category to
+  Alle and picking a category clears the search (Explore + Browse); filtered sets centre in the window;
+  zoom steps 1.4 / 1 / 0.23; overview shows category + title; zoom buttons grey out at the limits; no
+  text selection while dragging.
 - Explore visuals: no post text, bigger, placed apart (figure left, museum right of centre); figure
   starts black ("Keine Projektion"); museum plain with shadows; slight skew toward the cursor only while
   hovered (camera moves, projection stays put). No drag-rotate — it fought the page's drag-to-pan;
@@ -48,5 +51,6 @@ the latest round (smaller visuals, black default figure, museum shadows). Next: 
 ## Session Log
 ### 2026-10-02
 Built islands, particles, ring, browse, explore (+ removed fluid, sort, hoffmann, tiles, louvres,
-coral, colour). Project files created; Blender sources moved in from the Desktop. Next: owner's
-review of Explore's 3D visuals.
+coral, colour). Project files created; Blender sources moved in from the Desktop. Explore iterated:
+3D visuals (projection fixed to world space, black default, shadows, hover skew), search suggestions,
+filter/search reset, logo overview built then parked (see Postponed). Next: owner's next direction.

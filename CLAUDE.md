@@ -25,7 +25,8 @@ vault entry; state, decisions and learnings all live in `.planning/`.
 - Verify visually before pushing: headless screenshots + measured checks (see LEARNINGS).
 
 ## Build order
-UI-first, one exploration at a time; show it, wait for the owner's eye, then iterate.
+UI-first, one exploration at a time. Verify headless, then push — the owner reviews on the live Pages
+site — and iterate on what comes back.
 
 ## Session start
 Read `.planning/STATE.md`. Before touching an area, check `.planning/LEARNINGS.md`.

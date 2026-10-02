@@ -19,10 +19,18 @@ Hard-won, project-specific. Kept here instead of the vault (self-contained proje
   (`renderer.setPixelRatio(dpr * scale)`) or it blurs/wastes pixels. `[tested 2026-10-02]`
 
 ## Interaction
+- **Drag-to-rotate on an object inside a drag-to-pan field doesn't work for this page** — OrbitControls
+  on the model canvases fought the field's pan (owner rejected it); a hover-only skew does the job
+  without competing for the drag. `[tested 2026-10-02]`
 - `setPointerCapture` on the pan container sends the `click` to the container, not to buttons inside
   it — resolve buttons via `document.elementsFromPoint()` in `pointerup`. `[tested 2026-10-02]`
 - Centring a filtered set: sort cells by their centre (not top-left corner — that biased the set
   down-right), then centre the view on the bounding box of what is visible. `[tested 2026-10-02]`
+
+## Process
+- Keep a rejected-but-liked feature as an option with `git revert` instead of deleting it by hand: the
+  revert commit is the restore handle (`git revert <revert-sha>`), and a `git revert --no-commit … &&
+  git revert --abort` dry run proves it still applies. Record it under Postponed. `[tested 2026-10-02]`
 
 ## Verification
 - **Headless WebGL**: the shared Playwright MCP browser collides with parallel agents, and

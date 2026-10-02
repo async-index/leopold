@@ -12,5 +12,6 @@ Try many key-visual and browsing ideas quickly; keep what works.
 The museum's site content (exhibitions, programme, visit, collection…) as one explorable field,
 mixed with interactive 3D visuals.
 - [x] Content crawl + cards, categories, search, 3 zoom steps, opens on PREMIERE!
-- [x] Figure (switchable projections) and museum model as big interactive visuals
-- [ ] Next steps — to be decided
+- [x] Figure (switchable projections) and museum model as big interactive visuals (hover skew)
+- [x] Search suggestions ("Häufig gesucht"); category and search reset each other
+- [ ] Next steps — to be decided (logo overview parked as an option)
