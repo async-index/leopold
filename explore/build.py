@@ -19,6 +19,8 @@ LONG = 1000
 SKIP = {"ausstellungen", "ausstellungen/aktuell", "ausstellungen/vorschau", "besuch/programm", "besuch/programm/",
         "besuch", "museum", "presse", "presse/presseunterlagen", "presse/news", "engagement", "museum/team-und-kontakte",
         "vermietung/infos"}
+# Titles too long or clumsy for a card, by page path.
+TITLES = {"barrierefreiheit": "Barrierefreiheit im Leopold Museum"}
 NAMES = {"besuch": "Besuch", "sammlung": "Sammlung", "ausstellungen": "Ausstellungen", "museum": "Museum",
          "forschung": "Forschung", "engagement": "Engagement", "vermietung": "Vermietung", "presse": "Presse"}
 
@@ -32,7 +34,7 @@ for p in pages:
     path = p["url"].split("/de/", 1)[1].rstrip("/") if "/de/" in p["url"] else ""
     if path in SKIP: continue
     segs = [s.strip() for s in p["doctitle"].split("|")]
-    title = p["title"] or segs[0]
+    title = TITLES.get(path) or p["title"] or segs[0]
     top = path.split("/")[0]
     if "/programm/" in path:
         cat, kicker = "Programm", p["cat"]

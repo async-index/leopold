@@ -18,6 +18,13 @@
   .item { position: absolute; left: 0; top: 0; transition: transform .5s cubic-bezier(.6, 0, .2, 1), opacity .3s; }
   .item[hidden] { display: none; }
   .item img { display: block; width: 100%; height: 100%; object-fit: cover; background: #ececea; -webkit-user-drag: none; user-select: none; }
+  .three { width: 100%; height: 100%; position: relative; }
+  .three canvas { display: block; width: 100%; height: 100%; }
+  .proj { position: absolute; right: 0; bottom: 0; display: flex; border: 1px solid var(--black); background: var(--white); }
+  .proj button { width: 24px; height: 24px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+  .proj button + button { border-left: 1px solid var(--black); }
+  .proj button:hover { background: var(--black); color: var(--white); }
+  body[data-step="2"] .proj { display: none; }
   .tilt { position: relative; width: 100%; height: 100%; transition: transform .35s ease-out; }
   .item .txt { position: absolute; top: 100%; left: 0; width: 100%; padding-top: 6px; transition: opacity .3s; }
   .item .k { opacity: .5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -55,6 +62,12 @@
   .panel span { opacity: .45; }
   .count { position: fixed; left: 10px; bottom: 10px; padding: 2px 4px; background: var(--white); color: rgba(23, 23, 23, .5); pointer-events: none; }
 </style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
 </head>
 <body data-step="0">
 <div class="view"><div class="field"></div></div>
@@ -78,12 +91,23 @@
 </div>
 <div class="count"></div>
 <script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 const CELL = 480, STEPS = [1.4, 1, 0.23]; // cell pitch at scale 1 (css px), scale per zoom step
 const view = document.querySelector('.view'), field = document.querySelector('.field');
 const zin = document.querySelector('.zin'), zout = document.querySelector('.zout');
 // Site content, current exhibitions and programme first so they take the centre.
 const CATS = ['Ausstellungen', 'Programm', 'Besuch', 'Sammlung', 'Museum', 'Forschung', 'Engagement', 'Vermietung', 'Presse', 'Info'];
-const works = (await (await fetch('items.json')).json()).sort((a, b) => CATS.indexOf(a.cat) - CATS.indexOf(b.cat));
+// The two 3D models from the figure and museum explorations, mixed in with the posts.
+const OBJECTS = [
+  { three: 'figure', cat: 'Sammlung', kicker: '3D', title: 'Figur', when: '', r: .72, img: '', url: '../figure/',
+    text: 'Eine Figur als Projektionsfläche für Werke der Sammlung. Mit ‹ › wechselt das Werk.' },
+  { three: 'museum', cat: 'Museum', kicker: '3D', title: 'Das Leopold Museum', when: '', r: 1.45, img: '', url: 'https://www.leopoldmuseum.org/de/museum/architektur',
+    text: 'Entwurf: Laurids und Manfred Ortner. Ein heller Kubus, verkleidet mit weißem Donaumuschelkalk.' },
+];
+const works = [...OBJECTS, ...await (await fetch('items.json')).json()].sort((a, b) => CATS.indexOf(a.cat) - CATS.indexOf(b.cat));
 
 // Field: a square of cells, odd columns dropped half a cell, small fixed jitter per cell.
 const COLS = Math.ceil(Math.sqrt(works.length)), ROWS = Math.ceil(works.length / COLS) + 1;
@@ -104,7 +128,10 @@ const items = works.map(w => {
   const el = document.createElement('div'); el.className = 'item';
   el.style.width = wd + 'px'; el.style.height = ht + 'px';
   const img = document.createElement(w.img ? 'img' : 'div');
-  if (w.img) { img.alt = w.title; img.decoding = 'async'; img.draggable = false; } else { img.className = 'card'; img.textContent = w.title; }
+  if (w.img) { img.alt = w.title; img.decoding = 'async'; img.draggable = false; }
+  else if (w.three) { img.className = 'three'; img.append(document.createElement('canvas'));
+    if (w.three === 'figure') img.insertAdjacentHTML('beforeend', '<div class="proj"><button data-d="-1" aria-label="Vorheriges Werk">‹</button><button data-d="1" aria-label="Nächstes Werk">›</button></div>'); }
+  else { img.className = 'card'; img.textContent = w.title; }
   const when = w.when + (w.more ? ` (+${w.more} Termine)` : '');
   const txt = document.createElement('div'); txt.className = 'txt';
   const rest = [w.kicker, when].filter(Boolean).join(' · ');
@@ -122,6 +149,7 @@ function apply(ease) {
   document.body.dataset.step = step;
   zin.disabled = step === 0; zout.disabled = step === STEPS.length - 1;
   clearTimeout(apply.t); apply.t = setTimeout(load, ease ? 650 : 120);
+  sharpen3D();
 }
 // Load only what is on screen: museum preview when small, the larger file at the closest step.
 function load() {
@@ -193,7 +221,10 @@ view.addEventListener('pointerup', e => {
   const d = drag; drag = null; view.classList.remove('dragging');
   if (!d || d.moved >= 4) return;
   view.releasePointerCapture(e.pointerId);
-  const hit = document.elementsFromPoint(e.clientX, e.clientY).find(el => el.classList?.contains('item'));
+  const at = document.elementsFromPoint(e.clientX, e.clientY);
+  const btn = at.find(el => el.matches?.('.proj button'));
+  if (btn) { cycleProjection(+btn.dataset.d); return; }
+  const hit = at.find(el => el.classList?.contains('item'));
   const it = hit && items.find(i => i.el === hit); if (!it) return;
   open(it.w.url, '_blank');
 });
@@ -227,6 +258,108 @@ document.querySelector('.bar input').addEventListener('input', e => {
 });
 addEventListener('keydown', e => { if (e.key === 'Escape') { pf.hidden = pm.hidden = true; } });
 addEventListener('resize', () => { clamp(); apply(false); });
+
+// ---- 3D cards: figure (artwork projections) and museum (plain) ----
+// Each renders into its own canvas, sharp at every zoom step, only while on screen;
+// both turn and shift toward the cursor wherever it is on the page.
+let mx = innerWidth / 2, my = innerHeight / 2;
+addEventListener('pointermove', e => { mx = e.clientX; my = e.clientY; });
+
+// Figure material: the artwork cast along x, y and z and blended by surface direction (as in ../figure/).
+const tri = { triMap: { value: null }, triScale: { value: 1 }, triAspect: { value: 1 } };
+const figureMaterial = new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0 });
+figureMaterial.onBeforeCompile = shader => {
+  Object.assign(shader.uniforms, tri);
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nvarying vec3 vTriPos;\nvarying vec3 vTriNormal;')
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+      vTriPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+      vTriNormal = normalize(mat3(modelMatrix) * objectNormal);`);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>
+      uniform sampler2D triMap; uniform float triScale; uniform float triAspect;
+      varying vec3 vTriPos; varying vec3 vTriNormal;
+      vec4 triSample(vec2 p) { return texture2D(triMap, p * triScale * vec2(1.0 / triAspect, 1.0) + 0.5); }`)
+    .replace('#include <map_fragment>', `
+      vec3 tw = pow(abs(normalize(vTriNormal)), vec3(4.0));
+      tw /= tw.x + tw.y + tw.z;
+      diffuseColor *= triSample(vTriPos.zy) * tw.x + triSample(vTriPos.xz) * tw.y + triSample(vTriPos.xy) * tw.z;`);
+};
+
+const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+const views = items.filter(it => it.w.three).map(it => {
+  const fig = it.w.three === 'figure';
+  const renderer = new THREE.WebGLRenderer({ canvas: it.img.querySelector('canvas'), antialias: true, alpha: true });
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  const scene = new THREE.Scene();
+  scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = fig ? 0.6 : 0.15;
+  const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(-2, 3, 4);
+  const rim = new THREE.DirectionalLight(0xffffff, 1); rim.position.set(3, 1, -3);
+  scene.add(key, rim, new THREE.HemisphereLight(0xffffff, 0xdddddd, 0.5));
+  // Museum: the lighting of ../museum/ (strong key, little fill) so the white faces separate.
+  if (!fig) { key.intensity = 2.6; key.position.set(-4, 3, 2); rim.intensity = 0.5; scene.children.at(-1).intensity = 0.25; }
+  const camera = new THREE.PerspectiveCamera(30, it.wd / it.ht, 0.01, 100);
+  const pivot = new THREE.Group(); scene.add(pivot);
+  const v = { it, renderer, scene, camera, pivot, size: null, yaw: 0, pitch: 0 };
+  loader.load(fig ? '../figure/figure.glb' : '../museum/museum.glb', gltf => {
+    const model = gltf.scene;
+    const mat = fig ? figureMaterial : new THREE.MeshStandardMaterial({ color: 0xf2f2f0, roughness: 0.9 });
+    model.traverse(o => { if (o.isMesh) { o.material = mat; if (fig || !o.geometry.attributes.normal) o.geometry.computeVertexNormals(); } });
+    const box = new THREE.Box3().setFromObject(model), size = box.getSize(new THREE.Vector3());
+    model.position.sub(box.getCenter(new THREE.Vector3())); pivot.add(model); v.size = size;
+    if (fig) tri.triScale.value = 1 / size.y;
+    // Frame: figure ~85% of the card height; museum from the source photo's three-quarter view.
+    const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    if (fig) camera.position.set(0, 0, Math.max(size.y / 2 / .85, size.x / 2 / .85 / camera.aspect) / t + size.z / 2);
+    else {
+      const d = Math.max(size.y / 2 / .6, size.x / 2 / .8 / camera.aspect) / t + size.z / 2, az = THREE.MathUtils.degToRad(-38), el = THREE.MathUtils.degToRad(6);
+      camera.position.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(d);
+    }
+    camera.lookAt(0, 0, 0); camera.near = camera.position.length() / 100; camera.far = camera.position.length() * 10; camera.updateProjectionMatrix();
+  });
+  return v;
+});
+function sharpen3D() {
+  for (const v of views ?? []) { v.renderer.setPixelRatio(Math.min(devicePixelRatio, 2) * scale); v.renderer.setSize(v.it.wd, v.it.ht, false); }
+}
+sharpen3D();
+
+const projections = await (await fetch('../figure/textures/works.json')).json();
+const texCache = new Map();
+let proj = 0;
+async function cycleProjection(d) {
+  proj = (proj + d + projections.length) % projections.length;
+  const w = projections[proj], src = '../figure/' + w.src;
+  if (!texCache.has(src)) texCache.set(src, new THREE.TextureLoader().loadAsync(src).then(t => {
+    t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping; t.anisotropy = 8; return t;
+  }));
+  const t = await texCache.get(src);
+  if (projections[proj] !== w) return; // a later click won
+  tri.triMap.value = t; tri.triAspect.value = t.image.width / t.image.height;
+  items.find(it => it.w.three === 'figure').el.querySelector('.r').textContent = ` · 3D · Projektion: ${w.title}, ${w.artist}`;
+}
+await cycleProjection(0);
+
+const clock = new THREE.Clock();
+(function frame() {
+  const t = clock.getElapsedTime();
+  for (const v of views) {
+    const { it } = v;
+    if (!v.size || it.el.hidden) continue;
+    const sx = px + it.x * scale, sy = py + it.y * scale;
+    if (sx > innerWidth || sy > innerHeight || sx + it.wd * scale < 0 || sy + it.ht * scale < 0) continue;
+    // Turn toward the cursor (relative to the card's centre) plus a slow idle sway.
+    const cx = sx + it.wd * scale / 2, cy = sy + it.ht * scale / 2;
+    const ux = Math.max(-1, Math.min(1, (mx - cx) / (innerWidth / 2))), uy = Math.max(-1, Math.min(1, (my - cy) / (innerHeight / 2)));
+    v.yaw += (ux * .6 + Math.sin(t * .4) * .12 - v.yaw) * .06;
+    v.pitch += (uy * .18 - v.pitch) * .06;
+    v.pivot.rotation.set(v.pitch, v.yaw, 0);
+    v.pivot.position.set(ux * v.size.x * .04, -uy * v.size.y * .03, 0);
+    v.renderer.render(v.scene, v.camera);
+  }
+  requestAnimationFrame(frame);
+})();
 
 layout();
 </script>
