@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leopold Islands</title>
+<style>
+  :root { --white: #f9f9f9; --black: #171717; --margin: 24px; --font: ui-monospace, "SF Mono", Menlo, monospace; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--white); color: var(--black);
+    font: 9px/180% var(--font); letter-spacing: -0.02em; text-transform: uppercase; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  body.over canvas { cursor: pointer; }
+  nav { position: fixed; top: 0; left: 0; padding: 13px var(--margin); z-index: 1; }
+  a { color: inherit; text-decoration: none; }
+  a:hover { opacity: .6; }
+  .caption { position: fixed; left: 0; right: 0; bottom: 14px; padding: 0 var(--margin); display: flex; gap: 8px;
+    justify-content: center; text-align: center; pointer-events: none; }
+  body:not(.over) .caption { visibility: hidden; }
+</style>
+</head>
+<body>
+<nav><a href="../">Leopold</a></nav>
+<canvas></canvas>
+<div class="caption"><span class="t"></span><span class="a"></span><span class="d"></span></div>
+<script>
+const MAX = 16, SIZE = 768, K = 40; // K: smooth-union radius in css px, how far islands reach to merge
+
+const canvas = document.querySelector('canvas');
+const gl = canvas.getContext('webgl2', { antialias: false, premultipliedAlpha: false });
+
+const frag = `#version 300 es
+precision highp float;
+precision highp sampler2DArray;
+uniform sampler2DArray uTex;
+uniform vec2 uRes;
+uniform float uDpr, uT, uK;
+uniform int uN;
+uniform vec4 uI[${MAX}]; // center.xy, radius, aspect
+uniform vec4 uP[${MAX}]; // wobble phases
+out vec4 o;
+float sdf(vec2 p, int i) {
+  vec2 q = (p - uI[i].xy) * vec2(1.0 / uI[i].w, uI[i].w);
+  float a = atan(q.y, q.x);
+  vec4 ph = uP[i];
+  float r = uI[i].z * (1.0 + 0.09 * sin(2.0 * a + ph.x + 0.31 * uT)
+                           + 0.06 * sin(3.0 * a + ph.y - 0.23 * uT)
+                           + 0.035 * sin(5.0 * a + ph.z + 0.17 * uT));
+  return length(q) - r;
+}
+vec3 img(vec2 p, int i) {
+  vec2 uv = (p - uI[i].xy) / (2.3 * uI[i].z * max(uI[i].w, 1.0 / uI[i].w)) + 0.5;
+  return textureGrad(uTex, vec3(uv, float(i)), dFdx(p) / (2.3 * uI[i].z), dFdy(p) / (2.3 * uI[i].z)).rgb;
+}
+void main() {
+  vec2 p = vec2(gl_FragCoord.x, uRes.y - gl_FragCoord.y) / uDpr;
+  float d = 1e9, best = 1e9, next = 1e9; int bi = 0, ni = 0;
+  for (int i = 0; i < uN; i++) {
+    float di = sdf(p, i);
+    if (di < best) { next = best; ni = bi; best = di; bi = i; }
+    else if (di < next) { next = di; ni = i; }
+    float h = max(uK - abs(d - di), 0.0) / uK;
+    d = min(d, di) - h * h * uK * 0.25;
+  }
+  float alpha = clamp(0.5 - d / max(fwidth(d), 1e-3), 0.0, 1.0);
+  // Seam between merged islands: each pixel shows the nearer one, blended over ~1 device px.
+  float w = clamp(0.5 + 0.5 * (next - best) * uDpr, 0.5, 1.0);
+  vec3 col = mix(img(p, ni), img(p, bi), w);
+  o = vec4(mix(vec3(0.976), col, alpha), 1.0);
+}`;
+const vert = `#version 300 es
+in vec2 v; void main() { gl_Position = vec4(v, 0.0, 1.0); }`;
+
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, vert));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, frag));
+gl.linkProgram(prog); gl.useProgram(prog);
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+const U = n => gl.getUniformLocation(prog, n);
+const u = { res: U('uRes'), dpr: U('uDpr'), t: U('uT'), k: U('uK'), n: U('uN'), i: U('uI'), p: U('uP') };
+
+let islands = [], works = [], W, H;
+const rnd = (a, b) => a + Math.random() * (b - a);
+
+// Home positions: a brick-offset grid sized to the window, jittered.
+function layout() {
+  W = innerWidth; H = innerHeight;
+  const dpr = Math.min(devicePixelRatio, 2);
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.uniform2f(u.res, canvas.width, canvas.height); gl.uniform1f(u.dpr, dpr);
+  const cols = Math.max(2, Math.round(W / 360)), rows = Math.max(2, Math.round(H / 300));
+  const pad = Math.min(W, H) * 0.06, cw = (W - 2 * pad) / cols, ch = (H - 2 * pad) / rows, n = Math.min(MAX, cols * rows, works.length);
+  islands.forEach((s, i) => s.on = i < n);
+  for (let i = 0; i < n; i++) {
+    const s = islands[i], r = Math.floor(i / cols), c = i % cols;
+    s.hx = pad + (c + 0.5 + (r % 2 ? 0.15 : -0.15)) * cw + s.jx * cw * 0.15;
+    s.hy = pad + (r + 0.5) * ch + s.jy * ch * 0.15;
+    s.R = Math.min(cw, ch) * 0.5 * s.size;
+    s.amp = Math.min(cw, ch) * 0.18;
+  }
+}
+
+// Same shape as the shader, for hover.
+function sdf(s, x, y, t) {
+  const qx = (x - s.x) / s.ax, qy = (y - s.y) * s.ax, a = Math.atan2(qy, qx);
+  const r = s.R * (1 + 0.09 * Math.sin(2 * a + s.p[0] + 0.31 * t) + 0.06 * Math.sin(3 * a + s.p[1] - 0.23 * t)
+    + 0.035 * Math.sin(5 * a + s.p[2] + 0.17 * t));
+  return Math.hypot(qx, qy) - r;
+}
+
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let mx = -1e4, my = -1e4, over = null;
+const I = new Float32Array(MAX * 4), P = new Float32Array(MAX * 4);
+
+function frame(ms) {
+  const t = still ? 0 : ms / 1000;
+  const on = islands.filter(s => s.on);
+  on.forEach((s, i) => {
+    s.x = s.hx + s.amp * Math.sin(t * s.f[0] + s.p[3]);
+    s.y = s.hy + s.amp * Math.cos(t * s.f[1] + s.p[4]);
+    I.set([s.x, s.y, s.R, s.ax], i * 4); P.set(s.p.slice(0, 4), i * 4);
+  });
+  gl.uniform4fv(u.i, I); gl.uniform4fv(u.p, P);
+  gl.uniform1f(u.t, t); gl.uniform1i(u.n, on.length); gl.uniform1f(u.k, K);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  let best = 0, hit = null;
+  on.forEach(s => { const d = sdf(s, mx, my, t); if (d < best) { best = d; hit = s; } });
+  if (hit !== over) {
+    over = hit;
+    document.body.classList.toggle('over', !!hit);
+    if (hit) for (const k of ['t', 'a', 'd']) document.querySelector('.caption .' + k).textContent =
+      hit.work[{ t: 'title', a: 'artist', d: 'date' }[k]];
+  }
+  requestAnimationFrame(frame);
+}
+
+addEventListener('pointermove', e => { mx = e.clientX; my = e.clientY; });
+document.addEventListener('pointerleave', () => { mx = my = -1e4; });
+canvas.addEventListener('click', () => over && open(over.work.url, '_blank'));
+addEventListener('resize', layout);
+
+(async () => {
+  works = (await (await fetch('works.json')).json()).sort(() => Math.random() - 0.5).slice(0, MAX);
+  const imgs = await Promise.all(works.map(w => new Promise(res => {
+    const im = new Image(); im.onload = () => res(im); im.src = w.src;
+  })));
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+  gl.texStorage3D(gl.TEXTURE_2D_ARRAY, Math.log2(SIZE) + 1, gl.RGBA8, SIZE, SIZE, imgs.length);
+  imgs.forEach((im, i) => gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, SIZE, SIZE, 1, gl.RGBA, gl.UNSIGNED_BYTE, im));
+  gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  islands = works.map(work => ({
+    work, jx: rnd(-1, 1), jy: rnd(-1, 1), size: rnd(0.85, 1.1), ax: rnd(0.85, 1.18),
+    p: Array.from({ length: 5 }, () => rnd(0, 6.283)), f: [rnd(0.08, 0.16), rnd(0.08, 0.16)],
+  }));
+  layout();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
