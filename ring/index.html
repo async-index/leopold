@@ -17,12 +17,6 @@
   a:hover { opacity: .6; }
   .caption { position: fixed; left: 0; right: 0; bottom: 14px; padding: 0 var(--margin); display: flex; gap: 8px;
     justify-content: center; text-align: center; pointer-events: none; }
-  .caption { z-index: 10; }
-  .work { position: fixed; inset: 0; z-index: 9; background: rgba(249, 249, 249, .97); display: flex; align-items: center;
-    justify-content: center; opacity: 0; pointer-events: none; transition: opacity .5s; cursor: pointer; }
-  .work.open { opacity: 1; pointer-events: auto; }
-  .work img { max-width: calc(100% - 144px); max-height: 70vh; object-fit: contain; }
-  @media (max-width: 600px) { .work img { max-width: calc(100% - 48px); } }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" } }
@@ -30,7 +24,6 @@
 </head>
 <body>
 <nav><a href="../">Leopold</a></nav>
-<div class="work"><img alt=""></div>
 <div class="caption"><span class="t"></span><span class="a"></span><span class="d"></span></div>
 <script type="module">
 import * as THREE from 'three';
@@ -59,6 +52,7 @@ let a = 0;
 works.forEach((w, i) => {
   const tex = loader.load(w.src); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
   const mat = new THREE.MeshBasicMaterial({ map: tex });
+  const ghost = new THREE.Object3D(); // the card's slot in the ring, for flying back
   const geo = new THREE.PlaneGeometry(widths[i], H);
   const mid = a + (widths[i] / 2) / R; a += (widths[i] + GAP) / R;
   // One group per card (tilted on hover) holding two single-sided planes,
@@ -66,8 +60,9 @@ works.forEach((w, i) => {
   const card = new THREE.Group();
   card.position.set(Math.sin(mid) * R, 0, Math.cos(mid) * R);
   card.rotation.order = 'YXZ'; card.rotation.y = mid;
-  card.userData = { tx: 0, ty: 0 };
-  ring.add(card); groups.push(card);
+  card.userData = { tx: 0, ty: 0, mat, ghost };
+  ghost.position.copy(card.position); ghost.rotation.copy(card.rotation);
+  ring.add(card, ghost); groups.push(card);
   for (const back of [0, 1]) {
     const m = new THREE.Mesh(geo, mat);
     m.rotation.y = back * Math.PI;
@@ -99,17 +94,34 @@ addEventListener('pointermove', e => {
   ptr.set(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1);
   if (drag !== null) { const dx = e.clientX - drag; drag = e.clientX; moved += Math.abs(dx); vel = dx * 0.0009; }
 });
-// Click a card: show the work centred over the ring; Escape (or a click) returns.
-const work = document.querySelector('.work'), img = work.querySelector('img');
-let opened = -1;
+// Click a card: it flies out of the ring to the centre, the ring stops and fades;
+// Escape (or another click) flies it back into its slot.
+let opened = -1, p = 0, goal = 0;
+const from = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() }, to = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
 function show(i) {
-  opened = i; img.src = works[i].src; work.classList.add('open'); shown = -1;
+  opened = i; goal = 1; vel = 0; shown = -1;
+  const g = groups[i];
+  g.updateWorldMatrix(true, false); g.getWorldPosition(from.pos); g.getWorldQuaternion(from.quat);
+  scene.attach(g);
+  // Drawn on top and unfogged while out of the ring.
+  g.userData.mat.depthTest = false; g.userData.mat.fog = false; g.userData.mat.needsUpdate = true;
+  g.children.forEach(m => m.renderOrder = 1);
   cap('t').textContent = works[i].title; cap('a').textContent = works[i].artist; cap('d').textContent = works[i].date;
 }
-function hide() { opened = -1; work.classList.remove('open'); shown = -1; }
-renderer.domElement.addEventListener('click', () => { if (over && moved < 5) show(over.userData.i); });
-work.addEventListener('click', hide);
-addEventListener('keydown', e => { if (e.key === 'Escape' && opened >= 0) hide(); });
+function hide() { if (opened >= 0) goal = 0; }
+function land() {
+  const g = groups[opened], { ghost, mat } = g.userData;
+  ring.add(g); g.position.copy(ghost.position); g.rotation.copy(ghost.rotation); g.userData.tx = g.userData.ty = 0;
+  mat.depthTest = true; mat.fog = true; mat.needsUpdate = true;
+  g.children.forEach(m => m.renderOrder = 0);
+  opened = -1; shown = -1; vel = 0;
+}
+renderer.domElement.addEventListener('click', () => {
+  if (moved >= 5) return;
+  if (opened >= 0) hide(); else if (over) show(over.userData.i);
+});
+addEventListener('keydown', e => { if (e.key === 'Escape') hide(); });
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
 const cap = k => document.querySelector('.caption .' + k);
 let shown = -1;
@@ -117,7 +129,20 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (drag === null) vel *= Math.pow(0.04, dt);
-  if (opened >= 0) { renderer.render(scene, camera); return; }
+  if (opened >= 0) {
+    p = goal ? Math.min(1, p + dt / 0.9) : Math.max(0, p - dt / 0.9);
+    const e = ease(still ? goal : p), g = groups[opened];
+    // Centre pose: facing the camera, ~72% of the height (or 86% of the width, whichever is tighter).
+    const t2 = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const D = Math.max(H / (0.72 * t2), widths[opened] / (0.86 * t2 * camera.aspect));
+    to.pos.copy(camera.position).addScaledVector(camera.getWorldDirection(new THREE.Vector3()), D); to.quat.copy(camera.quaternion);
+    if (!goal) { g.userData.ghost.getWorldPosition(from.pos); g.userData.ghost.getWorldQuaternion(from.quat); }
+    g.position.lerpVectors(from.pos, to.pos, e); g.quaternion.slerpQuaternions(from.quat, to.quat, e);
+    scene.fog.near = 3 - 3 * e; scene.fog.far = 9 - 5.8 * e;
+    document.body.classList.toggle('over', goal === 1);
+    if (!goal && p === 0) land();
+    renderer.render(scene, camera); return;
+  }
   rot += (still ? 0 : SPIN * dt) + vel;
   ring.rotation.y = -rot;
 
