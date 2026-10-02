@@ -32,8 +32,7 @@
   body[data-step="2"] .item .k { font-size: calc(8px / .23); }
   body[data-step="2"] .item h2 { font-size: calc(9px / .23); line-height: 1.15; margin: calc(1px / .23) 0 0;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  body:not([data-step="0"]) .item { cursor: zoom-in; }
-  body[data-step="0"] .item { cursor: pointer; }
+  .item { cursor: pointer; }
 
   /* Overlaid navigation, top left */
   .nav { position: fixed; top: 10px; left: 10px; z-index: 2; width: 320px; max-width: calc(100% - 20px);
@@ -177,7 +176,7 @@ view.addEventListener('pointermove', e => {
 });
 view.addEventListener('pointerleave', () => { if (tipped) { tipped.firstChild.style.transform = ''; tipped = null; } });
 
-// Drag to pan; a click without movement zooms in on the work, or opens it at the closest step.
+// Drag to pan; a click without movement opens the item at any zoom step.
 let drag = null;
 view.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, px, py, moved: 0 }; view.setPointerCapture(e.pointerId); });
 view.addEventListener('pointermove', e => {
@@ -193,8 +192,7 @@ view.addEventListener('pointerup', e => {
   view.releasePointerCapture(e.pointerId);
   const hit = document.elementsFromPoint(e.clientX, e.clientY).find(el => el.classList?.contains('item'));
   const it = hit && items.find(i => i.el === hit); if (!it) return;
-  if (step === 0) { open(it.w.url, '_blank'); return; }
-  step--; scale = STEPS[step]; centreOn(it.x + it.wd / 2, it.y + it.ht / 2); apply(true);
+  open(it.w.url, '_blank');
 });
 // Wheel / trackpad: one zoom step per gesture, anchored at the cursor.
 let acc = 0, lock = 0;
