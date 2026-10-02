@@ -23,6 +23,10 @@ the latest round (smaller visuals, black default figure, museum shadows). Next: 
 - Repo stays public and low-profile: pages get `noindex`, docs describe the work only.
 
 ## Postponed
+- **Logo overview for Explore** — built and removed 2026-10-02, kept as an option. The overview step
+  becomes the logo from `grid/shape.svg` tiled (32 columns) with the posts' images; the page loads on it,
+  then zooms into PREMIERE!. Restore: `git revert 54c7c0d` (re-applies commit 3ab0e05; resolve
+  conflicts in `explore/index.html` if Explore changed since) — revisit when asked for "the logo view".
 - Building pale on white — shadows added; darker material if it still reads too faint.
 - Overview captions (2 lines) touch the card below in a few places — 1-line titles if it shows.
 - Same zoom steps / 3D on Browse — only if asked.
