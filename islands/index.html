@@ -103,7 +103,7 @@ function layout() {
     const s = islands[i], r = Math.floor(i / cols), c = i % cols;
     s.hx = pad + (c + 0.5 + (r % 2 ? 0.15 : -0.15)) * cw + s.jx * cw * 0.15;
     s.hy = pad + (r + 0.5) * ch + s.jy * ch * 0.15;
-    s.R = Math.min(cw, ch) * 0.5 * s.size;
+    s.R = Math.min(cw, ch) * 0.58 * s.size;
     s.amp = Math.min(cw, ch) * 0.18;
   }
 }
