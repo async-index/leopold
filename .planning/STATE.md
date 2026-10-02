@@ -19,6 +19,9 @@ the latest round (smaller visuals, black default figure, museum shadows). Next: 
   no mouse-follow when not hovered.
 - Explore search: on focus, "Häufig gesucht" suggestions (tickets, hours, current/upcoming exhibitions,
   tours, kids, directions, café, shop, accessibility, contact).
+- Explore overview (step 3) = the logo from `grid/shape.svg`, tiled (32 columns) with the posts'
+  images, repeated; follows search/filter; tile click opens its post. The page loads on the logo,
+  then zooms into PREMIERE!.
 - Ring: clicked work flies out of the ring to the centre, ring stops and fades; Escape/click returns.
 - Repo stays public and low-profile: pages get `noindex`, docs describe the work only.
 
