@@ -14,15 +14,8 @@
 
   .view { position: fixed; inset: 0; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
   .view.dragging { cursor: grabbing; }
-  .field { position: absolute; left: 0; top: 0; transform-origin: 0 0; transition: opacity .5s; }
-  .field.ease { transition: transform .6s cubic-bezier(.6, 0, .2, 1), opacity .5s; }
-  /* Overview (step 2): the field gives way to the logo built from the posts' images */
-  body[data-step="2"] .field { opacity: 0; pointer-events: none; }
-  .logo { position: absolute; inset: 0; opacity: 0; pointer-events: none; transform: scale(1.8);
-    transition: opacity .5s, transform .6s cubic-bezier(.6, 0, .2, 1); }
-  body[data-step="2"] .logo { opacity: 1; transform: none; pointer-events: auto; }
-  .tile { position: absolute; background: #ececea center / cover no-repeat; cursor: pointer; transition: opacity .5s; }
-  .logo.intro .tile { opacity: 0; }
+  .field { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .field.ease { transition: transform .6s cubic-bezier(.6, 0, .2, 1); }
   .item { position: absolute; left: 0; top: 0; transition: transform .5s cubic-bezier(.6, 0, .2, 1), opacity .3s; }
   .item[hidden] { display: none; }
   .item img { display: block; width: 100%; height: 100%; object-fit: cover; background: #ececea; -webkit-user-drag: none; user-select: none; }
@@ -33,6 +26,7 @@
   .proj span { padding: 0 10px; }
   .proj button { width: 24px; height: 24px; border: 0; border-left: 1px solid var(--black); background: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
   .proj button:hover { background: var(--black); color: var(--white); }
+  body[data-step="2"] .proj { display: none; }
   .tilt { position: relative; width: 100%; height: 100%; transition: transform .35s ease-out; }
   .item .txt { position: absolute; top: 100%; left: 0; width: 100%; padding-top: 6px; transition: opacity .3s; }
   .item .k { opacity: .5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -41,6 +35,12 @@
     -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .item .card { width: 100%; height: 100%; border: 1px solid var(--black); padding: 12px; display: flex; align-items: flex-end;
     font: 22px/1.1 var(--font); letter-spacing: -0.03em; background: var(--white); }
+  /* Overview (scale .23): category + title only, sized to stay ~8–9px on screen */
+  body[data-step="2"] .item .txt { width: max(100%, 380px); padding-top: calc(4px / .23); }
+  body[data-step="2"] .item .r, body[data-step="2"] .item .x { display: none; }
+  body[data-step="2"] .item .k { font-size: calc(8px / .23); }
+  body[data-step="2"] .item h2 { font-size: calc(9px / .23); line-height: 1.15; margin: calc(1px / .23) 0 0;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .item { cursor: pointer; }
 
   /* Overlaid navigation, top left */
@@ -73,7 +73,7 @@
 </script>
 </head>
 <body data-step="0">
-<div class="view"><div class="field"></div><div class="logo intro"></div></div>
+<div class="view"><div class="field"></div></div>
 <div class="nav">
   <div class="bar">
     <input type="search" placeholder="Suchen" aria-label="Suchen">
@@ -172,7 +172,6 @@ function load() {
 }
 function zoomTo(s, ax = innerWidth / 2, ay = innerHeight / 2) {
   s = Math.max(0, Math.min(STEPS.length - 1, s)); if (s === step) return;
-  if (s === 2 || step === 2) { ax = innerWidth / 2; ay = innerHeight / 2; }
   const k = STEPS[s] / scale; px = ax - (ax - px) * k; py = ay - (ay - py) * k;
   step = s; scale = STEPS[s]; clamp(); apply(true);
 }
@@ -186,7 +185,7 @@ function clamp() {
 let query = '', artist = '';
 const overlap = (c, x, y, w, h) => { const cw = c.w ?? CELL, ch = c.h ?? CELL;
   return Math.max(0, Math.min(c.x + cw, x + w) - Math.max(c.x, x)) * Math.max(0, Math.min(c.y + ch, y + h) - Math.max(c.y, y)); };
-let layout = function () {
+function layout() {
   const q = query.toLowerCase();
   // Visuals first (only with no search, and in "Alle" or their own category); every cell
   // they cover by more than a quarter is taken, so posts flow around them.
@@ -246,7 +245,7 @@ view.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY,
 view.addEventListener('pointermove', e => {
   if (!drag) return;
   drag.moved = Math.max(drag.moved, Math.hypot(e.clientX - drag.x, e.clientY - drag.y));
-  if (drag.moved < 4 || step === 2) return;
+  if (drag.moved < 4) return;
   view.classList.add('dragging');
   px = drag.px + e.clientX - drag.x; py = drag.py + e.clientY - drag.y; clamp(); apply(false);
 });
@@ -257,8 +256,6 @@ view.addEventListener('pointerup', e => {
   const at = document.elementsFromPoint(e.clientX, e.clientY);
   const btn = at.find(el => el.matches?.('.proj button'));
   if (btn) { cycleProjection(+btn.dataset.d); return; }
-  const tile = at.find(el => el.classList?.contains('tile'));
-  if (tile) { open(tile.dataset.url, '_blank'); return; }
   const hit = at.find(el => el.classList?.contains('item'));
   const it = hit && items.find(i => i.el === hit); if (!it) return;
   if (!it.w.three) open(it.w.url, '_blank');
@@ -429,54 +426,10 @@ cycleProjection(0);
   requestAnimationFrame(frame);
 })();
 
-// ---- Overview: the logo (as in ../grid/), tiled with the posts' images, repeated to fill it ----
-const LOGO_COLS = 32, LOGO_FILL = 0.3, LOGO_GAP = 0.1; // columns across the shape · share of a cell the shape must cover · gap
-const logo = document.querySelector('.logo');
-const svg = await (await fetch('../grid/shape.svg')).text();
-const [vx, vy, vw, vh] = svg.match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number);
-const unit = vw / LOGO_COLS, LOGO_ROWS = Math.ceil(vh / unit), SS = 8;
-const mc = document.createElement('canvas'); mc.width = LOGO_COLS * SS; mc.height = LOGO_ROWS * SS;
-const mctx = mc.getContext('2d', { willReadFrequently: true });
-mctx.scale(SS / unit, SS / unit); mctx.translate(-vx, -vy);
-for (const [, d] of svg.matchAll(/<path[^>]*\sd="([^"]+)"/g)) mctx.fill(new Path2D(d));
-const mask = mctx.getImageData(0, 0, mc.width, mc.height).data;
-const tiles = [];
-for (let r = 0; r < LOGO_ROWS; r++) for (let c = 0; c < LOGO_COLS; c++) {
-  let n = 0;
-  for (let y = 0; y < SS; y++) for (let x = 0; x < SS; x++) if (mask[((r * SS + y) * mc.width + c * SS + x) * 4 + 3] > 127) n++;
-  if (n / (SS * SS) < LOGO_FILL) continue;
-  const el = document.createElement('div'); el.className = 'tile';
-  el.style.transitionDelay = Math.hypot(c + .5 - LOGO_COLS / 2, r + .5 - LOGO_ROWS / 2) / LOGO_COLS * 900 + 'ms'; // intro: from the centre out
-  logo.append(el); tiles.push({ el, c, r });
-}
-function placeLogo() {
-  const size = Math.min(innerWidth * .82 / LOGO_COLS, (innerHeight - 100) * .9 / LOGO_ROWS);
-  const ox = (innerWidth - LOGO_COLS * size) / 2, oy = (innerHeight - LOGO_ROWS * size) / 2;
-  for (const t of tiles) Object.assign(t.el.style, { left: ox + t.c * size + 'px', top: oy + t.r * size + 'px',
-    width: size * (1 - LOGO_GAP) + 'px', height: size * (1 - LOGO_GAP) + 'px' });
-}
-// Fill from the posts currently shown (search/filter), shuffled so repeats spread out.
-function fillLogo() {
-  const posts = items.filter(it => !it.el.hidden && it.w.img);
-  let seq = []; while (posts.length && seq.length < tiles.length) seq.push(...posts.map((p, i) => [p, (i * 7919 + seq.length * 104729) % 1000]).sort((a, b) => a[1] - b[1]).map(x => x[0]));
-  tiles.forEach((t, i) => { const p = seq[i]; t.el.hidden = !p; if (p) { t.el.style.backgroundImage = `url("${p.w.img}")`; t.el.dataset.url = p.w.url; } });
-}
-const relayout = layout;
-layout = () => { relayout(); fillLogo(); };
-addEventListener('resize', placeLogo);
-placeLogo();
-
-// Load: the logo first, then zoom into the current exhibition PREMIERE! (image and text centred).
-const home = items.find(it => it.w.cat === 'Ausstellungen' && it.w.title === 'PREMIERE!');
-const centreHome = () => centreOn(home.x + home.wd / 2, home.y + (home.ht + txtOf(home).offsetHeight) / 2);
 layout();
-step = 2; scale = STEPS[2]; if (home) centreHome(); apply(false);
-requestAnimationFrame(() => logo.classList.remove('intro'));
-setTimeout(() => {
-  tiles.forEach(t => t.el.style.transitionDelay = '');
-  if (step !== 2) return; // the visitor already zoomed
-  step = 0; scale = STEPS[0]; if (home) centreHome(); apply(true);
-}, 2600);
+// Open on the current exhibition PREMIERE!, image and text centred in the window.
+const home = items.find(it => it.w.cat === 'Ausstellungen' && it.w.title === 'PREMIERE!');
+if (home) { centreOn(home.x + home.wd / 2, home.y + (home.ht + txtOf(home).offsetHeight) / 2); apply(false); }
 </script>
 </body>
 </html>
