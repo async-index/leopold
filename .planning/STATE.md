@@ -7,7 +7,8 @@ Phase 2 — Explore (zoomable grid as site navigation).
 Explore is live: 52 content cards, figure + museum visuals (hover skew), search with "Häufig gesucht"
 suggestions, category/search resetting each other, overview with category + title, opens on PREMIERE!.
 Latest round reviewed as "ok for a first version" for the (now removed) logo view; no open requests.
-Next: owner's next direction for Explore — candidates are in Postponed.
+Next session (owner, 2026-10-02): open content as an **overlay above the canvas** instead of the
+external museum link. Open questions for the start of that session — see Open Issues.
 
 ## Decided
 - Islands/Ring/Particles use the 11 hand-picked works (`islands/build.py`) — the random collection
@@ -45,6 +46,10 @@ Next: owner's next direction for Explore — candidates are in Postponed.
   zoom-through — "dont like any of those" — 2026-10-02
 
 ## Open Issues
+- Overlay content: `items.json` only holds title, subtitle, date and one short excerpt per page — a real
+  article overlay needs a fuller scrape (body text, more images, event times/prices) in `scrape.mjs` /
+  `build.py`. Decide with the owner first: how much of each page, overlay layout (full-screen sheet vs.
+  panel), what stays external (tickets/booking), close behaviour (Escape, click outside, back button?).
 - Explore content is a 2026-10-02 snapshot; events/dates will go stale (re-run scrape + build).
 - `figure/figure.glb` is output of a generator whose licence excludes the EU.
 

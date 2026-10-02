@@ -14,4 +14,5 @@ mixed with interactive 3D visuals.
 - [x] Content crawl + cards, categories, search, 3 zoom steps, opens on PREMIERE!
 - [x] Figure (switchable projections) and museum model as big interactive visuals (hover skew)
 - [x] Search suggestions ("Häufig gesucht"); category and search reset each other
-- [ ] Next steps — to be decided (logo overview parked as an option)
+- [ ] Content opens as an overlay above the canvas, not as an external link (next session)
+- [ ] Further steps — to be decided (logo overview parked as an option)
