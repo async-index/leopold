@@ -42,7 +42,8 @@
   .bar input { flex: 1; min-width: 0; padding: 0 8px; outline: none; }
   .bar input::placeholder { color: var(--black); opacity: .35; }
   .bar button { width: 28px; flex: none; border-left: 1px solid var(--black); cursor: pointer; display: grid; place-items: center; }
-  .bar button:hover, .panel a:hover, .panel button:hover { background: var(--black); color: var(--white); }
+  .bar button:hover:not(:disabled), .panel a:hover, .panel button:hover { background: var(--black); color: var(--white); }
+  .bar button:disabled { opacity: .25; cursor: default; }
   .bar svg { width: 11px; height: 11px; display: block; }
   .panel { border-top: 1px solid var(--black); }
   .panel[hidden] { display: none; }
@@ -79,6 +80,7 @@
 <script type="module">
 const CELL = 480, STEPS = [1.4, 1, 0.23]; // cell pitch at scale 1 (css px), scale per zoom step
 const view = document.querySelector('.view'), field = document.querySelector('.field');
+const zin = document.querySelector('.zin'), zout = document.querySelector('.zout');
 // Site content, current exhibitions and programme first so they take the centre.
 const CATS = ['Ausstellungen', 'Programm', 'Besuch', 'Sammlung', 'Museum', 'Forschung', 'Engagement', 'Vermietung', 'Presse', 'Info'];
 const works = (await (await fetch('items.json')).json()).sort((a, b) => CATS.indexOf(a.cat) - CATS.indexOf(b.cat));
@@ -118,6 +120,7 @@ function apply(ease) {
   field.classList.toggle('ease', !!ease);
   field.style.transform = `translate(${px}px, ${py}px) scale(${scale})`;
   document.body.dataset.step = step;
+  zin.disabled = step === 0; zout.disabled = step === STEPS.length - 1;
   clearTimeout(apply.t); apply.t = setTimeout(load, ease ? 650 : 120);
 }
 // Load only what is on screen: museum preview when small, the larger file at the closest step.
@@ -201,8 +204,8 @@ view.addEventListener('wheel', e => {
   acc += e.deltaY; if (Math.abs(acc) < 40) return;
   zoomTo(step + Math.sign(acc), e.clientX, e.clientY); acc = 0; lock = performance.now() + 700;
 }, { passive: false });
-document.querySelector('.zin').onclick = () => zoomTo(step - 1);
-document.querySelector('.zout').onclick = () => zoomTo(step + 1);
+zin.onclick = () => zoomTo(step - 1);
+zout.onclick = () => zoomTo(step + 1);
 
 // Navigation panels
 const pf = document.querySelector('.panel.filter'), pm = document.querySelector('.panel.menu');
