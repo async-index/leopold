@@ -18,6 +18,7 @@
   .item { position: absolute; left: 0; top: 0; transition: transform .5s cubic-bezier(.6, 0, .2, 1), opacity .3s; }
   .item[hidden] { display: none; }
   .item img { display: block; width: 100%; height: 100%; object-fit: cover; background: #ececea; -webkit-user-drag: none; user-select: none; }
+  .tilt { position: relative; width: 100%; height: 100%; transition: transform .35s ease-out; }
   .item .txt { position: absolute; top: 100%; left: 0; width: 100%; padding-top: 6px; transition: opacity .3s; }
   .item .k { opacity: .5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .item h2 { font: 15px/1.15 var(--font); letter-spacing: -0.03em; margin: 3px 0 4px; }
@@ -102,7 +103,8 @@ const items = works.map(w => {
   const txt = document.createElement('div'); txt.className = 'txt';
   txt.innerHTML = `<div class="k">${esc([w.cat, w.kicker, when].filter(Boolean).join(' · '))}</div><h2>${esc(w.title)}</h2>` +
     `<div class="x">${esc(w.sub || w.text)}</div>`;
-  el.append(img, txt); field.append(el);
+  const tilt = document.createElement('div'); tilt.className = 'tilt';
+  tilt.append(img, txt); el.append(tilt); field.append(el);
   return { w, el, img, wd, ht, x: 0, y: 0, res: 0 };
 });
 
@@ -149,11 +151,25 @@ function layout() {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const it of items) if (!it.el.hidden) {
     x0 = Math.min(x0, it.x); y0 = Math.min(y0, it.y);
-    x1 = Math.max(x1, it.x + it.wd); y1 = Math.max(y1, it.y + it.ht + it.el.lastChild.offsetHeight);
+    x1 = Math.max(x1, it.x + it.wd); y1 = Math.max(y1, it.y + it.ht + txtOf(it).offsetHeight);
   }
   if (n) centreOn((x0 + x1) / 2, (y0 + y1) / 2); else centreOn(FW / 2, FH / 2);
   apply(true);
 }
+
+const txtOf = it => it.el.querySelector('.txt');
+// Hover: the card (image + text) tips subtly toward the cursor in 3D.
+const SKEW = 6; // max degrees
+let tipped = null;
+view.addEventListener('pointermove', e => {
+  const el = !drag && e.pointerType === 'mouse' ? e.target.closest?.('.item') : null;
+  if (tipped && tipped !== el) { tipped.firstChild.style.transform = ''; tipped = null; }
+  if (!el) return;
+  const r = el.firstChild.getBoundingClientRect(), u = (e.clientX - r.left) / r.width - .5, v = (e.clientY - r.top) / r.height - .5;
+  el.firstChild.style.transform = `perspective(900px) rotateX(${-v * 2 * SKEW}deg) rotateY(${u * 2 * SKEW}deg)`;
+  tipped = el;
+});
+view.addEventListener('pointerleave', () => { if (tipped) { tipped.firstChild.style.transform = ''; tipped = null; } });
 
 // Drag to pan; a click without movement zooms in on the work, or opens it at the closest step.
 let drag = null;
