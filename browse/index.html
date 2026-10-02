@@ -78,7 +78,7 @@ for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
 const FW = COLS * CELL, FH = ROWS * CELL + CELL / 2;
 // Cells nearest the centre first, so a filtered set gathers in the middle.
 const order = cells.map((c, i) => i).sort((a, b) =>
-  Math.hypot(cells[a].x - FW / 2, cells[a].y - FH / 2) - Math.hypot(cells[b].x - FW / 2, cells[b].y - FH / 2));
+  Math.hypot(cells[a].x + CELL / 2 - FW / 2, cells[a].y + CELL / 2 - FH / 2) - Math.hypot(cells[b].x + CELL / 2 - FW / 2, cells[b].y + CELL / 2 - FH / 2));
 
 const items = works.map(w => {
   // Equal area per work, uncropped: width/height from its proportions.
@@ -132,7 +132,14 @@ function layout() {
     it.el.style.transform = `translate(${it.x}px, ${it.y}px)`;
   }
   document.querySelector('.count').textContent = n + ' / ' + works.length;
-  centreOn(FW / 2, FH / 2); apply(true);
+  // Centre the view on what is showing (captions included), not on the field.
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const it of items) if (!it.el.hidden) {
+    x0 = Math.min(x0, it.x); y0 = Math.min(y0, it.y);
+    x1 = Math.max(x1, it.x + it.wd); y1 = Math.max(y1, it.y + it.ht + it.el.lastChild.offsetHeight);
+  }
+  if (n) centreOn((x0 + x1) / 2, (y0 + y1) / 2); else centreOn(FW / 2, FH / 2);
+  apply(true);
 }
 
 // Drag to pan; a click without movement zooms in on the work, or opens it at the closest step.
@@ -176,7 +183,12 @@ pf.onclick = e => {
 pf.firstChild.classList.add('on');
 document.querySelector('.tfilter').onclick = () => { pf.hidden = !pf.hidden; pm.hidden = true; };
 document.querySelector('.tmenu').onclick = () => { pm.hidden = !pm.hidden; pf.hidden = true; };
-document.querySelector('.bar input').addEventListener('input', e => { query = e.target.value.trim(); layout(); });
+// Search always covers everything: typing resets the filter to all.
+document.querySelector('.bar input').addEventListener('input', e => {
+  query = e.target.value.trim();
+  if (query && artist) { artist = ''; pf.querySelectorAll('button').forEach((x, i) => x.classList.toggle('on', i === 0)); }
+  layout();
+});
 addEventListener('keydown', e => { if (e.key === 'Escape') { pf.hidden = pm.hidden = true; } });
 addEventListener('resize', () => { clamp(); apply(false); });
 

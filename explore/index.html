@@ -25,7 +25,7 @@
     -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
   .item .card { width: 100%; height: 100%; border: 1px solid var(--black); padding: 12px; display: flex; align-items: flex-end;
     font: 22px/1.1 var(--font); letter-spacing: -0.03em; background: var(--white); }
-  body:not([data-step="0"]) .item .txt { opacity: 0; }
+  body[data-step="2"] .item .txt { opacity: 0; }
   body:not([data-step="0"]) .item { cursor: zoom-in; }
   body[data-step="0"] .item { cursor: pointer; }
 
@@ -72,7 +72,7 @@
 </div>
 <div class="count"></div>
 <script type="module">
-const CELL = 480, STEPS = [1, 0.5, 0.23]; // cell pitch at step 0 (css px), scale per zoom step
+const CELL = 480, STEPS = [1.4, 1, 0.23]; // cell pitch at scale 1 (css px), scale per zoom step
 const view = document.querySelector('.view'), field = document.querySelector('.field');
 // Site content, current exhibitions and programme first so they take the centre.
 const CATS = ['Ausstellungen', 'Programm', 'Besuch', 'Sammlung', 'Museum', 'Forschung', 'Engagement', 'Vermietung', 'Presse', 'Info'];
@@ -87,7 +87,7 @@ for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
 const FW = COLS * CELL, FH = ROWS * CELL + CELL / 2;
 // Cells nearest the centre first, so a filtered set gathers in the middle.
 const order = cells.map((c, i) => i).sort((a, b) =>
-  Math.hypot(cells[a].x - FW / 2, cells[a].y - FH / 2) - Math.hypot(cells[b].x - FW / 2, cells[b].y - FH / 2));
+  Math.hypot(cells[a].x + CELL / 2 - FW / 2, cells[a].y + CELL / 2 - FH / 2) - Math.hypot(cells[b].x + CELL / 2 - FW / 2, cells[b].y + CELL / 2 - FH / 2));
 
 const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const items = works.map(w => {
@@ -145,7 +145,14 @@ function layout() {
     it.el.style.transform = `translate(${it.x}px, ${it.y}px)`;
   }
   document.querySelector('.count').textContent = n + ' / ' + works.length;
-  centreOn(FW / 2, FH / 2); apply(true);
+  // Centre the view on what is showing (captions included), not on the field.
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const it of items) if (!it.el.hidden) {
+    x0 = Math.min(x0, it.x); y0 = Math.min(y0, it.y);
+    x1 = Math.max(x1, it.x + it.wd); y1 = Math.max(y1, it.y + it.ht + it.el.lastChild.offsetHeight);
+  }
+  if (n) centreOn((x0 + x1) / 2, (y0 + y1) / 2); else centreOn(FW / 2, FH / 2);
+  apply(true);
 }
 
 // Drag to pan; a click without movement zooms in on the work, or opens it at the closest step.
@@ -189,7 +196,12 @@ pf.onclick = e => {
 pf.firstChild.classList.add('on');
 document.querySelector('.tfilter').onclick = () => { pf.hidden = !pf.hidden; pm.hidden = true; };
 document.querySelector('.tmenu').onclick = () => { pm.hidden = !pm.hidden; pf.hidden = true; };
-document.querySelector('.bar input').addEventListener('input', e => { query = e.target.value.trim(); layout(); });
+// Search always covers everything: typing resets the filter to all.
+document.querySelector('.bar input').addEventListener('input', e => {
+  query = e.target.value.trim();
+  if (query && artist) { artist = ''; pf.querySelectorAll('button').forEach((x, i) => x.classList.toggle('on', i === 0)); }
+  layout();
+});
 addEventListener('keydown', e => { if (e.key === 'Escape') { pf.hidden = pm.hidden = true; } });
 addEventListener('resize', () => { clamp(); apply(false); });
 
