@@ -23,7 +23,7 @@
 <canvas></canvas>
 <div class="caption"><span class="t"></span><span class="a"></span><span class="d"></span></div>
 <script>
-const G = 256, N = G * G, FOV = 30 * Math.PI / 180, FILL = 0.8; // G: samples per side, FILL: painting height / short side
+const G = 384, N = G * G, FOV = 30 * Math.PI / 180, FILL = 0.8; // G: samples per side, FILL: painting height / short side
 const MOVE = 4800, HOLD = 6000, RELIEF = 0.045, AMP = 0.45, TILT = 5 * Math.PI / 180; // ms, ms, z range in picture widths, max cursor tilt
 
 const canvas = document.querySelector('canvas');
@@ -59,9 +59,7 @@ const frag = `#version 300 es
 precision mediump float;
 in vec3 vC; in float vS; out vec4 o;
 void main() {
-  float r = length(gl_PointCoord - 0.5) * 2.0;
-  float a = (1.0 - smoothstep(0.8, 1.0, r)) * mix(1.0, 0.75, vS);
-  o = vec4(vC, a);
+  o = vec4(vC, mix(1.0, 0.75, vS));
 }`;
 
 function shader(type, src) {
@@ -139,8 +137,8 @@ function resize() {
   const f = 1 / Math.tan(FOV / 2), min = Math.min(W, H);
   const d = 0.5 * f * H / (FILL * min);
   gl.uniform2f(u.f, f * H / W, f); gl.uniform1f(u.d, d);
-  // pixels per picture unit at the picture plane, times 2.1x a grid cell so soft edges overlap into a continuous surface
-  gl.uniform1f(u.px, f * canvas.height / 2 / G * 2.1);
+  // pixels per picture unit at the picture plane, times 1.15x a grid cell so square points tile despite the relief
+  gl.uniform1f(u.px, f * canvas.height / 2 / G * 1.15);
 }
 
 function show(i) {
