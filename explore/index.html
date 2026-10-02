@@ -362,6 +362,9 @@ const clock = new THREE.Clock();
 })();
 
 layout();
+// Open on the current exhibition PREMIERE!, image and text centred in the window.
+const home = items.find(it => it.w.cat === 'Ausstellungen' && it.w.title === 'PREMIERE!');
+if (home) { centreOn(home.x + home.wd / 2, home.y + (home.ht + txtOf(home).offsetHeight) / 2); apply(false); }
 </script>
 </body>
 </html>
