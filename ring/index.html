@@ -17,6 +17,12 @@
   a:hover { opacity: .6; }
   .caption { position: fixed; left: 0; right: 0; bottom: 14px; padding: 0 var(--margin); display: flex; gap: 8px;
     justify-content: center; text-align: center; pointer-events: none; }
+  .caption { z-index: 10; }
+  .work { position: fixed; inset: 0; z-index: 9; background: rgba(249, 249, 249, .97); display: flex; align-items: center;
+    justify-content: center; opacity: 0; pointer-events: none; transition: opacity .5s; cursor: pointer; }
+  .work.open { opacity: 1; pointer-events: auto; }
+  .work img { max-width: calc(100% - 144px); max-height: 70vh; object-fit: contain; }
+  @media (max-width: 600px) { .work img { max-width: calc(100% - 48px); } }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" } }
@@ -24,11 +30,12 @@
 </head>
 <body>
 <nav><a href="../">Leopold</a></nav>
+<div class="work"><img alt=""></div>
 <div class="caption"><span class="t"></span><span class="a"></span><span class="d"></span></div>
 <script type="module">
 import * as THREE from 'three';
 
-const H = 1, GAP = 0.22, SPIN = 0.06; // card height, gap between cards, idle spin in radians per second
+const H = 1, GAP = 0.22, SPIN = 0.06, SKEW = 0.18; // card height, gap between cards, idle spin in radians per second, max hover tilt in radians
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -47,20 +54,25 @@ const R = (widths.reduce((a, b) => a + b, 0) + GAP * works.length) / (2 * Math.P
 // Ring tilted slightly, like a wheel seen a little from above and rolled.
 const tilt = new THREE.Group(); tilt.rotation.set(0.12, 0, -0.08); scene.add(tilt);
 const ring = new THREE.Group(); tilt.add(ring);
-const cards = [];
+const cards = [], groups = [];
 let a = 0;
 works.forEach((w, i) => {
   const tex = loader.load(w.src); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
   const mat = new THREE.MeshBasicMaterial({ map: tex });
   const geo = new THREE.PlaneGeometry(widths[i], H);
   const mid = a + (widths[i] / 2) / R; a += (widths[i] + GAP) / R;
-  // Two single-sided planes so the work reads unmirrored from both sides of the ring.
+  // One group per card (tilted on hover) holding two single-sided planes,
+  // so the work reads unmirrored from both sides of the ring.
+  const card = new THREE.Group();
+  card.position.set(Math.sin(mid) * R, 0, Math.cos(mid) * R);
+  card.rotation.order = 'YXZ'; card.rotation.y = mid;
+  card.userData = { tx: 0, ty: 0 };
+  ring.add(card); groups.push(card);
   for (const back of [0, 1]) {
     const m = new THREE.Mesh(geo, mat);
-    m.position.set(Math.sin(mid) * R, 0, Math.cos(mid) * R);
-    m.rotation.y = mid + back * Math.PI;
-    m.userData.i = i; m.userData.mid = mid;
-    ring.add(m); cards.push(m);
+    m.rotation.y = back * Math.PI;
+    m.userData = { i, mid, back };
+    card.add(m); cards.push(m);
   }
 });
 
@@ -87,7 +99,17 @@ addEventListener('pointermove', e => {
   ptr.set(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1);
   if (drag !== null) { const dx = e.clientX - drag; drag = e.clientX; moved += Math.abs(dx); vel = dx * 0.0009; }
 });
-renderer.domElement.addEventListener('click', () => { if (over && moved < 5) open(works[over.userData.i].url, '_blank'); });
+// Click a card: show the work centred over the ring; Escape (or a click) returns.
+const work = document.querySelector('.work'), img = work.querySelector('img');
+let opened = -1;
+function show(i) {
+  opened = i; img.src = works[i].src; work.classList.add('open'); shown = -1;
+  cap('t').textContent = works[i].title; cap('a').textContent = works[i].artist; cap('d').textContent = works[i].date;
+}
+function hide() { opened = -1; work.classList.remove('open'); shown = -1; }
+renderer.domElement.addEventListener('click', () => { if (over && moved < 5) show(over.userData.i); });
+work.addEventListener('click', hide);
+addEventListener('keydown', e => { if (e.key === 'Escape' && opened >= 0) hide(); });
 
 const cap = k => document.querySelector('.caption .' + k);
 let shown = -1;
@@ -95,6 +117,7 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (drag === null) vel *= Math.pow(0.04, dt);
+  if (opened >= 0) { renderer.render(scene, camera); return; }
   rot += (still ? 0 : SPIN * dt) + vel;
   ring.rotation.y = -rot;
 
@@ -108,7 +131,15 @@ renderer.setAnimationLoop(() => {
   }
 
   ray.setFromCamera(ptr, camera);
-  over = ray.intersectObjects(cards)[0]?.object ?? null;
+  const hit = ray.intersectObjects(cards)[0];
+  over = hit?.object ?? null;
+  // Hover: the card tips under the cursor in 3D; the others ease back flat.
+  groups.forEach((g, i) => {
+    const on = hit && drag === null && over.userData.i === i;
+    const ux = on ? (over.userData.back ? 1 - hit.uv.x : hit.uv.x) - 0.5 : 0, uy = on ? hit.uv.y - 0.5 : 0;
+    g.userData.tx += (-uy * 2 * SKEW - g.userData.tx) * 0.1; g.userData.ty += (ux * 2 * SKEW - g.userData.ty) * 0.1;
+    g.rotation.x = g.userData.tx; g.rotation.y = cards[i * 2].userData.mid + g.userData.ty;
+  });
   document.body.classList.toggle('over', !!over && drag === null);
   renderer.render(scene, camera);
 });
