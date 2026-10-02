@@ -20,7 +20,8 @@
   .item[hidden] { display: none; }
   .item img { display: block; width: 100%; height: 100%; object-fit: cover; background: #ececea; -webkit-user-drag: none; user-select: none; }
   .three { width: 100%; height: 100%; position: relative; }
-  .three canvas { display: block; width: 100%; height: 100%; }
+  .three canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  .three canvas:active { cursor: grabbing; }
   .proj { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); display: flex; align-items: center;
     border: 1px solid var(--black); background: var(--white); white-space: nowrap; }
   .proj span { padding: 0 10px; }
@@ -62,6 +63,7 @@
   .panel > :last-child { border-bottom: 0; }
   .panel .on { background: var(--black); color: var(--white); }
   .panel span { opacity: .45; }
+  .panel .head { padding: 6px 8px; border-bottom: 1px solid var(--black); opacity: .45; }
   .count { position: fixed; left: 10px; bottom: 10px; padding: 2px 4px; background: var(--white); color: rgba(23, 23, 23, .5); pointer-events: none; }
 </style>
 <script type="importmap">
@@ -81,6 +83,7 @@
     <button class="tfilter" aria-label="Filter"><svg viewBox="0 0 11 11"><path d="M3 1v9M8 1v9M1.5 3.5h3M6.5 7.5h3" stroke="currentColor"/></svg></button>
     <button class="tmenu" aria-label="Menu"><svg viewBox="0 0 11 11"><path d="M1 3.5h9M1 7.5h9" stroke="currentColor"/></svg></button>
   </div>
+  <div class="panel suggest" hidden></div>
   <div class="panel filter" hidden></div>
   <div class="panel menu" hidden>
     <a href="https://www.leopoldmuseum.org/de/besuch/tickets-preise/online-ticket" target="_blank">Tickets <span>↗</span></a>
@@ -95,6 +98,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 const CELL = 480, STEPS = [1.4, 1, 0.23]; // cell pitch at scale 1 (css px), scale per zoom step
@@ -239,7 +243,7 @@ view.addEventListener('pointerleave', () => { if (tipped) { tipped.firstChild.st
 
 // Drag to pan; a click without movement opens the item at any zoom step.
 let drag = null;
-view.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, px, py, moved: 0 }; view.setPointerCapture(e.pointerId); });
+view.addEventListener('pointerdown', e => { if (e.target.matches('.three canvas')) return; drag = { x: e.clientX, y: e.clientY, px, py, moved: 0 }; view.setPointerCapture(e.pointerId); });
 view.addEventListener('pointermove', e => {
   if (!drag) return;
   drag.moved = Math.max(drag.moved, Math.hypot(e.clientX - drag.x, e.clientY - drag.y));
@@ -278,22 +282,37 @@ pf.onclick = e => {
   artist = b.dataset.a; pf.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); layout();
 };
 pf.firstChild.classList.add('on');
-document.querySelector('.tfilter').onclick = () => { pf.hidden = !pf.hidden; pm.hidden = true; };
-document.querySelector('.tmenu').onclick = () => { pm.hidden = !pm.hidden; pf.hidden = true; };
+const ps = document.querySelector('.panel.suggest'), input = document.querySelector('.bar input');
+const setFilter = a => { artist = a; pf.querySelectorAll('button').forEach(x => x.classList.toggle('on', x.dataset.a === a)); };
+document.querySelector('.tfilter').onclick = () => { pf.hidden = !pf.hidden; pm.hidden = ps.hidden = true; };
+document.querySelector('.tmenu').onclick = () => { pm.hidden = !pm.hidden; pf.hidden = ps.hidden = true; };
 // Search always covers everything: typing resets the filter to all.
-document.querySelector('.bar input').addEventListener('input', e => {
-  query = e.target.value.trim();
-  if (query && artist) { artist = ''; pf.querySelectorAll('button').forEach((x, i) => x.classList.toggle('on', i === 0)); }
+input.addEventListener('input', e => {
+  query = e.target.value.trim(); ps.hidden = !!query;
+  if (query && artist) setFilter('');
   layout();
 });
-addEventListener('keydown', e => { if (e.key === 'Escape') { pf.hidden = pm.hidden = true; } });
+// Suggestions on focus: what most visitors look for. q = search term, cat = optional filter with it.
+const SUGGEST = [
+  ['Tickets', 'Tickets'], ['Öffnungszeiten', 'Öffnungszeiten'], ['Aktuelle Ausstellungen', 'aktuell', 'Ausstellungen'],
+  ['Demnächst', 'vorschau', 'Ausstellungen'], ['Führungen', 'Führung'], ['Für Kinder', 'Kinder'], ['Anreise', 'Anreise'],
+  ['Café', 'Café'], ['Shop', 'Shop'], ['Barrierefreiheit', 'Barrierefrei'], ['Kontakt', 'Kontakt'],
+];
+ps.innerHTML = '<div class="head">Häufig gesucht</div>' + SUGGEST.map(([l], i) => `<button data-i="${i}">${l}</button>`).join('');
+ps.addEventListener('pointerdown', e => e.preventDefault()); // keep focus so the click lands before blur
+ps.onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const [, q, cat = ''] = SUGGEST[b.dataset.i];
+  input.value = query = q; setFilter(cat); ps.hidden = true; input.blur(); layout();
+};
+input.addEventListener('focus', () => { if (!input.value) { ps.hidden = false; pf.hidden = pm.hidden = true; } });
+input.addEventListener('blur', () => { ps.hidden = true; });
+addEventListener('keydown', e => { if (e.key === 'Escape') { pf.hidden = pm.hidden = ps.hidden = true; } });
 addEventListener('resize', () => { clamp(); apply(false); });
 
 // ---- 3D cards: figure (artwork projections) and museum (plain) ----
-// Each renders into its own canvas, sharp at every zoom step, only while on screen;
-// both turn and shift toward the cursor wherever it is on the page.
-let mx = innerWidth / 2, my = innerHeight / 2;
-addEventListener('pointermove', e => { mx = e.clientX; my = e.clientY; });
+// Each renders into its own canvas, sharp at every zoom step, only while on screen.
+// Drag on a model to rotate it, as in ../figure/ and ../museum/ (wheel stays the field's zoom).
 
 // Figure material: the artwork cast along x, y and z and blended by surface direction (as in ../figure/).
 const tri = { triMap: { value: null }, triScale: { value: 1 }, triAspect: { value: 1 } };
@@ -333,7 +352,9 @@ const views = items.filter(it => it.w.three).map(it => {
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     key.castShadow = true; key.shadow.mapSize.set(2048, 2048); }
   const camera = new THREE.PerspectiveCamera(30, it.wd / it.ht, 0.01, 100);
-  const v = { it, renderer, scene, camera, size: null, yaw: 0, pitch: 0, base: null };
+  const controls = new OrbitControls(camera, renderer.domElement);
+  Object.assign(controls, { enableDamping: true, dampingFactor: 0.08, enableZoom: false, enablePan: false });
+  const v = { it, renderer, scene, camera, controls, size: null };
   loader.load(fig ? '../figure/figure.glb' : '../museum/museum.glb', gltf => {
     const model = gltf.scene;
     const mat = fig ? figureMaterial : new THREE.MeshStandardMaterial({ color: 0xf2f2f0, roughness: 0.9 });
@@ -345,7 +366,9 @@ const views = items.filter(it => it.w.three).map(it => {
     // Tight framing that still fits while orbiting: height ~92%, the footprint's diagonal ~95% of the width.
     const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), diag = Math.hypot(size.x, size.z);
     const dist = Math.max(size.y / 2 / .92, diag / 2 / .95 / camera.aspect) / t + diag / 2;
-    v.base = { dist, az: fig ? 0 : THREE.MathUtils.degToRad(-38), el: fig ? 0 : THREE.MathUtils.degToRad(6) };
+    const az = fig ? 0 : THREE.MathUtils.degToRad(-38), el = fig ? 0 : THREE.MathUtils.degToRad(6);
+    camera.position.set(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(dist);
+    controls.update();
     if (!fig) { // shadow frustum fitted around the model, as in ../museum/
       const r = size.length() / 2, key = scene.children.find(o => o.castShadow);
       key.position.normalize().multiplyScalar(r * 2);
@@ -381,22 +404,13 @@ async function cycleProjection(d) {
 }
 cycleProjection(0);
 
-const clock = new THREE.Clock();
 (function frame() {
-  const t = clock.getElapsedTime();
   for (const v of views) {
     const { it } = v;
     if (!v.size || it.el.hidden) continue;
     const sx = px + it.x * scale, sy = py + it.y * scale;
     if (sx > innerWidth || sy > innerHeight || sx + it.wd * scale < 0 || sy + it.ht * scale < 0) continue;
-    // Turn toward the cursor (relative to the card's centre) plus a slow idle sway.
-    const cx = sx + it.wd * scale / 2, cy = sy + it.ht * scale / 2;
-    const ux = Math.max(-1, Math.min(1, (mx - cx) / (innerWidth / 2))), uy = Math.max(-1, Math.min(1, (my - cy) / (innerHeight / 2)));
-    v.yaw += (ux * .6 + Math.sin(t * .4) * .12 - v.yaw) * .06;
-    v.pitch += (uy * .18 - v.pitch) * .06;
-    const { dist, az, el } = v.base, a = az - v.yaw, e = el + v.pitch;
-    v.camera.position.set(Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)).multiplyScalar(dist);
-    v.camera.lookAt(-ux * v.size.x * .04, uy * v.size.y * .03, 0);
+    v.controls.update();
     v.renderer.render(v.scene, v.camera);
   }
   requestAnimationFrame(frame);
