@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leopold Tiles</title>
+<style>
+  :root { --white: #f9f9f9; --black: #171717; --margin: 24px; --font: ui-monospace, "SF Mono", Menlo, monospace; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--white); color: var(--black);
+    font: 9px/180% var(--font); letter-spacing: -0.02em; text-transform: uppercase; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; }
+  nav { position: fixed; top: 0; left: 0; padding: 13px var(--margin); z-index: 1; }
+  a { color: inherit; text-decoration: none; }
+  a:hover { opacity: .6; }
+  .caption { position: fixed; left: 0; right: 0; bottom: 14px; padding: 0 var(--margin); display: flex; gap: 8px;
+    justify-content: center; text-align: center; pointer-events: none; transition: opacity .5s; }
+  .caption.out { opacity: 0; }
+</style>
+</head>
+<body>
+<nav><a href="../">Leopold</a></nav>
+<canvas></canvas>
+<div class="caption"><span class="t"></span><span class="a"></span><span class="d"></span></div>
+<script>
+const N = 12, FOV = 30 * Math.PI / 180, FILL = 0.8; // N: tiles per side, FILL: painting height / short side
+const FLIP = 1100, SPREAD = 1500, HOLD = 5500, GAP = 2, TILT = 5 * Math.PI / 180; // ms flip, ms wave spread, ms between waves, gap in css px, max cursor tilt
+
+const canvas = document.querySelector('canvas');
+const gl = canvas.getContext('webgl2', { antialias: true });
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const vert = `#version 300 es
+uniform float uN, uT, uSpread, uFlip, uGap, uMaxD, uDir, uD;
+uniform vec2 uO, uF; uniform int uAxis; uniform mat3 uR;
+out vec2 vA, vB; out float vShade; flat out float vBack;
+void main() {
+  float id = float(gl_InstanceID);
+  vec2 ij = vec2(mod(id, uN), floor(id / uN));
+  vec2 k = vec2(gl_VertexID & 1, gl_VertexID >> 1); // corner, y down like the image
+  vec2 c = (ij + 0.5) / uN;
+  float p = uT < 0.0 ? 0.0 : clamp((uT - length(c - uO) / uMaxD * uSpread) / uFlip, 0.0, 1.0);
+  float s = p * p * (3.0 - 2.0 * p);
+  float e = s + 0.05 * sin(3.14159 * clamp((p - 0.55) / 0.45, 0.0, 1.0)); // overshoots 180 deg, settles back
+  float a = 3.14159 * e * uDir, ca = cos(a), sa = sin(a);
+  vec2 l = (k - 0.5) * (1.0 - uGap * 4.0 * s * (1.0 - s)) / uN * vec2(1.0, -1.0);
+  vec3 q = vec3(c.x - 0.5, 0.5 - c.y, 0.0);
+  if (uAxis == 0) { q.x += l.x * ca; q.z = l.x * sa; q.y += l.y; }
+  else { q.y += l.y * ca; q.z = l.y * sa; q.x += l.x; }
+  q.z += abs(sa) * 0.6 / uN; // lift towards the camera so neighbours never cut through
+  vBack = ca < 0.0 ? 1.0 : 0.0;
+  vec2 kb = uAxis == 0 ? vec2(1.0 - k.x, k.y) : vec2(k.x, 1.0 - k.y);
+  vA = (ij + k) / uN; vB = (ij + kb) / uN;
+  vShade = mix(0.5, 1.0, pow(abs(ca), 0.7));
+  q = uR * q; q.z -= uD;
+  const float n = 0.1, f = 10.0;
+  gl_Position = vec4(q.xy * uF, -(f + n) / (f - n) * q.z - 2.0 * f * n / (f - n), -q.z);
+}`;
+const frag = `#version 300 es
+precision mediump float;
+uniform sampler2D uTa, uTb;
+in vec2 vA, vB; in float vShade; flat in float vBack; out vec4 o;
+void main() {
+  o = vec4((vBack > 0.5 ? texture(uTb, vB) : texture(uTa, vA)).rgb * vShade, 1.0);
+}`;
+
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, vert));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, frag));
+gl.linkProgram(prog); gl.useProgram(prog);
+const U = n => gl.getUniformLocation(prog, n);
+const u = {}; for (const n of ['N', 'T', 'Spread', 'Flip', 'Gap', 'MaxD', 'Dir', 'D', 'O', 'F', 'Axis', 'R', 'Ta', 'Tb']) u[n] = U('u' + n);
+gl.uniform1f(u.N, N); gl.uniform1f(u.Spread, SPREAD); gl.uniform1f(u.Flip, FLIP);
+gl.uniform1i(u.Ta, 0); gl.uniform1i(u.Tb, 1);
+gl.enable(gl.DEPTH_TEST);
+
+function texture(img) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+
+let works = [], cur = 0, nxt = 0, t0 = -1, nextAt = 0;
+let W, H, dpr, mx = 0, my = 0, yaw = 0, pitch = 0, size = 0;
+
+function resize() {
+  dpr = Math.min(devicePixelRatio, 2); W = innerWidth; H = innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr; gl.viewport(0, 0, canvas.width, canvas.height);
+  const f = 1 / Math.tan(FOV / 2), min = Math.min(W, H);
+  size = FILL * min;
+  gl.uniform2f(u.F, f * H / W, f); gl.uniform1f(u.D, 0.5 * f * H / size);
+  gl.uniform1f(u.Gap, GAP / (size / N));
+}
+
+function show(i) {
+  const w = works[i], c = document.querySelector('.caption');
+  c.classList.add('out');
+  setTimeout(() => {
+    for (const k of ['title', 'artist', 'date']) c.querySelector('.' + k[0]).textContent = w[k];
+    c.classList.remove('out');
+  }, 500);
+}
+
+let origin = [0.5, 0.5];
+function next(o) { // o: wave origin in picture fractions
+  if (t0 >= 0) return;
+  nxt = (cur + 1 + Math.floor(Math.random() * (works.length - 1))) % works.length;
+  if (still) { cur = nxt; show(cur); nextAt = performance.now() + HOLD; return; }
+  if (!o) { const k = Math.floor(Math.random() * 5); o = k === 4 ? [0.5, 0.5] : [k & 1, k >> 1]; }
+  origin = o;
+  const maxD = Math.max(...[[0, 0], [1, 0], [0, 1], [1, 1]].map(q => Math.hypot(q[0] - o[0], q[1] - o[1])));
+  gl.uniform2f(u.O, o[0], o[1]); gl.uniform1f(u.MaxD, maxD);
+  gl.uniform1i(u.Axis, Math.random() < 0.5 ? 0 : 1); gl.uniform1f(u.Dir, Math.random() < 0.5 ? 1 : -1);
+  t0 = performance.now();
+  setTimeout(() => show(nxt), SPREAD * 0.5 + FLIP * 0.5 - 500);
+}
+
+const mat = (y, p) => { // pitch(p) * yaw(y), column-major
+  const cy = Math.cos(y), sy = Math.sin(y), cp = Math.cos(p), sp = Math.sin(p);
+  return new Float32Array([cy, sy * sp, -sy * cp, 0, cp, sp, sy, -cy * sp, cy * cp]);
+};
+
+function frame(ms) {
+  const t = still ? 0 : ms / 1000;
+  if (t0 >= 0 && ms - t0 > SPREAD + FLIP) { cur = nxt; t0 = -1; nextAt = ms + HOLD - SPREAD - FLIP; }
+  else if (t0 < 0 && ms > nextAt) next();
+  gl.uniform1f(u.T, t0 >= 0 ? ms - t0 : -1);
+  const k = still ? 0 : 1;
+  const ty = (mx * TILT + Math.sin(t * 0.13) * 0.025) * k, tp = (my * TILT + Math.sin(t * 0.09 + 1.3) * 0.018) * k;
+  yaw += (ty - yaw) * 0.06; pitch += (tp - pitch) * 0.06;
+  gl.uniformMatrix3fv(u.R, false, mat(yaw, pitch));
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, works[cur].tex);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, works[t0 >= 0 ? nxt : cur].tex);
+  gl.clearColor(0.976, 0.976, 0.976, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, N * N);
+  requestAnimationFrame(frame);
+}
+
+addEventListener('pointermove', e => { mx = e.clientX / W * 2 - 1; my = e.clientY / H * 2 - 1; });
+document.addEventListener('pointerleave', () => { mx = my = 0; });
+canvas.addEventListener('click', e => next([(e.clientX - W / 2) / size + 0.5, (e.clientY - H / 2) / size + 0.5]));
+addEventListener('resize', resize);
+
+(async () => {
+  works = await (await fetch('../islands/works.json')).json();
+  await Promise.all(works.map(w => new Promise(res => {
+    const img = new Image(); img.onload = () => { w.tex = texture(img); res(); }; img.src = '../islands/' + w.src;
+  })));
+  cur = Math.floor(Math.random() * works.length);
+  resize(); show(cur); nextAt = performance.now() + HOLD;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
