@@ -20,9 +20,10 @@
   .item img { display: block; width: 100%; height: 100%; object-fit: cover; background: #ececea; -webkit-user-drag: none; user-select: none; }
   .three { width: 100%; height: 100%; position: relative; }
   .three canvas { display: block; width: 100%; height: 100%; }
-  .proj { position: absolute; right: 0; bottom: 0; display: flex; border: 1px solid var(--black); background: var(--white); }
-  .proj button { width: 24px; height: 24px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
-  .proj button + button { border-left: 1px solid var(--black); }
+  .proj { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); display: flex; align-items: center;
+    border: 1px solid var(--black); background: var(--white); white-space: nowrap; }
+  .proj span { padding: 0 10px; }
+  .proj button { width: 24px; height: 24px; border: 0; border-left: 1px solid var(--black); background: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
   .proj button:hover { background: var(--black); color: var(--white); }
   body[data-step="2"] .proj { display: none; }
   .tilt { position: relative; width: 100%; height: 100%; transition: transform .35s ease-out; }
@@ -102,15 +103,14 @@ const zin = document.querySelector('.zin'), zout = document.querySelector('.zout
 const CATS = ['Ausstellungen', 'Programm', 'Besuch', 'Sammlung', 'Museum', 'Forschung', 'Engagement', 'Vermietung', 'Presse', 'Info'];
 // The two 3D models from the figure and museum explorations, mixed in with the posts.
 const OBJECTS = [
-  { three: 'figure', cat: 'Sammlung', kicker: '3D', title: 'Figur', when: '', r: .72, img: '', url: '../figure/',
-    text: 'Eine Figur als Projektionsfläche für Werke der Sammlung. Mit ‹ › wechselt das Werk.' },
-  { three: 'museum', cat: 'Museum', kicker: '3D', title: 'Das Leopold Museum', when: '', r: 1.45, img: '', url: 'https://www.leopoldmuseum.org/de/museum/architektur',
-    text: 'Entwurf: Laurids und Manfred Ortner. Ein heller Kubus, verkleidet mit weißem Donaumuschelkalk.' },
+  // Not posts: big interactive visuals (size in cells), no text, placed in the first ring around the centre.
+  { three: 'figure', cat: 'Sammlung', title: 'Figur', w: 1.4, h: 2, ring: 2 },
+  { three: 'museum', cat: 'Museum', title: 'Das Leopold Museum', w: 2.2, h: 1.5, ring: 8 },
 ];
 const works = [...OBJECTS, ...await (await fetch('items.json')).json()].sort((a, b) => CATS.indexOf(a.cat) - CATS.indexOf(b.cat));
 
 // Field: a square of cells, odd columns dropped half a cell, small fixed jitter per cell.
-const COLS = Math.ceil(Math.sqrt(works.length)), ROWS = Math.ceil(works.length / COLS) + 1;
+const COLS = Math.ceil(Math.sqrt(works.length)), ROWS = Math.ceil(works.length / COLS) + 2; // +1 row of room for the visuals
 let seed = 1918; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 const cells = [];
 for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
@@ -123,14 +123,21 @@ const order = cells.map((c, i) => i).sort((a, b) =>
 const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const items = works.map(w => {
   // Equal area per item, uncropped; room left below for the text.
+  if (w.three) {
+    const el = document.createElement('div'); el.className = 'item big';
+    const wd = w.w * CELL, ht = w.h * CELL;
+    el.style.width = wd + 'px'; el.style.height = ht + 'px';
+    const img = document.createElement('div'); img.className = 'three'; img.append(document.createElement('canvas'));
+    if (w.three === 'figure') img.insertAdjacentHTML('beforeend', '<div class="proj"><span></span><button data-d="-1" aria-label="Vorheriges Werk">‹</button><button data-d="1" aria-label="Nächstes Werk">›</button></div>');
+    el.append(img); field.append(el);
+    return { w, el, img, wd, ht, x: 0, y: 0, res: 1 };
+  }
   const s = CELL * .6, k = Math.min(1, CELL * .66 / (s * Math.max(Math.sqrt(w.r), 1 / Math.sqrt(w.r))));
   const wd = s * Math.sqrt(w.r) * k, ht = wd / w.r;
   const el = document.createElement('div'); el.className = 'item';
   el.style.width = wd + 'px'; el.style.height = ht + 'px';
   const img = document.createElement(w.img ? 'img' : 'div');
   if (w.img) { img.alt = w.title; img.decoding = 'async'; img.draggable = false; }
-  else if (w.three) { img.className = 'three'; img.append(document.createElement('canvas'));
-    if (w.three === 'figure') img.insertAdjacentHTML('beforeend', '<div class="proj"><button data-d="-1" aria-label="Vorheriges Werk">‹</button><button data-d="1" aria-label="Nächstes Werk">›</button></div>'); }
   else { img.className = 'card'; img.textContent = w.title; }
   const when = w.when + (w.more ? ` (+${w.more} Termine)` : '');
   const txt = document.createElement('div'); txt.className = 'txt';
@@ -172,22 +179,42 @@ function clamp() {
 
 // Search + filter: matching works take the cells nearest the centre.
 let query = '', artist = '';
+const overlap = (c, x, y, w, h) => { const cw = c.w ?? CELL, ch = c.h ?? CELL;
+  return Math.max(0, Math.min(c.x + cw, x + w) - Math.max(c.x, x)) * Math.max(0, Math.min(c.y + ch, y + h) - Math.max(c.y, y)); };
 function layout() {
   const q = query.toLowerCase();
+  // Visuals first (only with no search, and in "Alle" or their own category); every cell
+  // they cover by more than a quarter is taken, so posts flow around them.
+  const taken = new Set();
+  for (const it of items) if (it.w.three) {
+    const on = !q && (!artist || artist === it.w.cat);
+    it.el.hidden = !on; if (!on) continue;
+    const fits = i => { const c = cells[i]; const x = c.x + CELL / 2 - it.wd / 2, y = c.y + CELL / 2 - it.ht / 2;
+      return x >= 0 && y >= 0 && x + it.wd <= FW && y + it.ht <= FH && ![...taken].some(t => overlap(cells[t], x, y, it.wd, it.ht) > 0) ? { x, y } : null; };
+    const k = order.slice(artist ? 0 : it.w.ring).find(fits) ?? order.find(fits);
+    if (k === undefined) { it.el.hidden = true; continue; }
+    const { x, y } = fits(k); it.x = x; it.y = y;
+    // A post sits in the middle 80% of its cell's width, image plus text down to ~95% of its height.
+    const g = CELL * .06;
+    cells.forEach((c, i) => { if (overlap({ x: c.x + CELL * .1, y: c.y, w: CELL * .8, h: CELL * .95 }, x - g, y - g, it.wd + 2 * g, it.ht + 2 * g) > 0) taken.add(i); });
+    it.el.style.transform = `translate(${x}px, ${y}px)`;
+  }
+  const free = order.filter(i => !taken.has(i));
   let n = 0;
   for (const it of items) {
+    if (it.w.three) continue;
     const on = (!artist || it.w.cat === artist) && (!q || [it.w.cat, it.w.kicker, it.w.title, it.w.sub, it.w.text, it.w.when].join(' ').toLowerCase().includes(q));
     it.el.hidden = !on; if (!on) continue;
-    const c = cells[order[n++]];
+    const c = cells[free[n++]];
     it.x = c.x + (CELL - it.wd) / 2; it.y = c.y + (CELL * .72 - it.ht) / 2;
     it.el.style.transform = `translate(${it.x}px, ${it.y}px)`;
   }
-  document.querySelector('.count').textContent = n + ' / ' + works.length;
+  document.querySelector('.count').textContent = n + ' / ' + (works.length - OBJECTS.length);
   // Centre the view on what is showing (captions included), not on the field.
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const it of items) if (!it.el.hidden) {
     x0 = Math.min(x0, it.x); y0 = Math.min(y0, it.y);
-    x1 = Math.max(x1, it.x + it.wd); y1 = Math.max(y1, it.y + it.ht + txtOf(it).offsetHeight);
+    x1 = Math.max(x1, it.x + it.wd); y1 = Math.max(y1, it.y + it.ht + (txtOf(it)?.offsetHeight ?? 0));
   }
   if (n) centreOn((x0 + x1) / 2, (y0 + y1) / 2); else centreOn(FW / 2, FH / 2);
   apply(true);
@@ -198,7 +225,7 @@ const txtOf = it => it.el.querySelector('.txt');
 const SKEW = 6; // max degrees
 let tipped = null;
 view.addEventListener('pointermove', e => {
-  const el = !drag && e.pointerType === 'mouse' ? e.target.closest?.('.item') : null;
+  const el = !drag && e.pointerType === 'mouse' ? e.target.closest?.('.item:not(.big)') : null;
   if (tipped && tipped !== el) { tipped.firstChild.style.transform = ''; tipped = null; }
   if (!el) return;
   const r = el.firstChild.getBoundingClientRect(), u = (e.clientX - r.left) / r.width - .5, v = (e.clientY - r.top) / r.height - .5;
@@ -226,7 +253,7 @@ view.addEventListener('pointerup', e => {
   if (btn) { cycleProjection(+btn.dataset.d); return; }
   const hit = at.find(el => el.classList?.contains('item'));
   const it = hit && items.find(i => i.el === hit); if (!it) return;
-  open(it.w.url, '_blank');
+  if (!it.w.three) open(it.w.url, '_blank');
 });
 // Wheel / trackpad: one zoom step per gesture, anchored at the cursor.
 let acc = 0, lock = 0;
@@ -240,9 +267,9 @@ zout.onclick = () => zoomTo(step + 1);
 
 // Navigation panels
 const pf = document.querySelector('.panel.filter'), pm = document.querySelector('.panel.menu');
-const counts = {}; works.forEach(w => counts[w.cat] = (counts[w.cat] || 0) + 1);
+const counts = {}; works.forEach(w => { if (!w.three) counts[w.cat] = (counts[w.cat] || 0) + 1; });
 const top = CATS.filter(c => counts[c]).map(c => [c, counts[c]]);
-pf.innerHTML = [['', works.length], ...top].map(([a, n]) => `<button data-a="${a}">${a || 'Alle'} <span>(${n})</span></button>`).join('');
+pf.innerHTML = [['', works.length - OBJECTS.length], ...top].map(([a, n]) => `<button data-a="${a}">${a || 'Alle'} <span>(${n})</span></button>`).join('');
 pf.onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
   artist = b.dataset.a; pf.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); layout();
@@ -337,7 +364,7 @@ async function cycleProjection(d) {
   const t = await texCache.get(src);
   if (projections[proj] !== w) return; // a later click won
   tri.triMap.value = t; tri.triAspect.value = t.image.width / t.image.height;
-  items.find(it => it.w.three === 'figure').el.querySelector('.r').textContent = ` · 3D · Projektion: ${w.title}, ${w.artist}`;
+  items.find(it => it.w.three === 'figure').el.querySelector('.proj span').textContent = `${w.title} · ${w.artist}`;
 }
 await cycleProjection(0);
 
