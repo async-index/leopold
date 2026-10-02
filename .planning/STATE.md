@@ -11,7 +11,7 @@ the latest round (smaller visuals, black default figure, museum shadows). Next: 
 - Islands/Ring/Particles use the 11 hand-picked works (`islands/build.py`) — the random collection
   sample was rejected ("not happy with the artwork selection").
 - Explore: click opens the item at every zoom step (no click-to-zoom); search ignores the category
-  filter (resets it to Alle); filtered sets centre in the window; zoom steps 1.4 / 1 / 0.23; overview
+  filter (resets it to Alle) and picking a category clears the search (both pages); filtered sets centre in the window; zoom steps 1.4 / 1 / 0.23; overview
   shows category + title; zoom buttons grey out at the limits; no text selection while dragging.
 - Explore visuals: no post text, bigger, placed apart (figure left, museum right of centre); figure
   starts black ("Keine Projektion"); museum plain with shadows; slight skew toward the cursor only while

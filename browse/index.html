@@ -182,6 +182,8 @@ const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
 pf.innerHTML = [['', works.length], ...top].map(([a, n]) => `<button data-a="${a}">${a || 'Alle'} <span>(${n})</span></button>`).join('');
 pf.onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
+  // Picking a category clears the search, so the two never combine into an empty field.
+  query = ''; document.querySelector('.bar input').value = '';
   artist = b.dataset.a; pf.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); layout();
 };
 pf.firstChild.classList.add('on');
