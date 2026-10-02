@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leopold Particles</title>
+<style>
+  :root { --white: #f9f9f9; --black: #171717; --margin: 24px; --font: ui-monospace, "SF Mono", Menlo, monospace; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--white); color: var(--black);
+    font: 9px/180% var(--font); letter-spacing: -0.02em; text-transform: uppercase; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; }
+  nav { position: fixed; top: 0; left: 0; padding: 13px var(--margin); z-index: 1; }
+  a { color: inherit; text-decoration: none; }
+  a:hover { opacity: .6; }
+  .caption { position: fixed; left: 0; right: 0; bottom: 14px; padding: 0 var(--margin); display: flex; gap: 8px;
+    justify-content: center; text-align: center; pointer-events: none; transition: opacity .5s; }
+  .caption.out { opacity: 0; }
+</style>
+</head>
+<body>
+<nav><a href="../">Leopold</a></nav>
+<canvas></canvas>
+<div class="caption"><span class="t"></span><span class="a"></span><span class="d"></span></div>
+<script>
+const G = 256, N = G * G, FOV = 30 * Math.PI / 180, FILL = 0.8; // G: samples per side, FILL: painting height / short side
+const MOVE = 4800, HOLD = 6000, RELIEF = 0.045, AMP = 0.45, TILT = 5 * Math.PI / 180; // ms, ms, z range in picture widths, max cursor tilt
+
+const canvas = document.querySelector('canvas');
+const gl = canvas.getContext('webgl2', { antialias: false, premultipliedAlpha: false });
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const vert = `#version 300 es
+in vec3 aA, aB; in vec4 cA, cB, aR;
+uniform float uP, uT, uPx, uAmp, uD;
+uniform mat3 uR; uniform vec2 uF; uniform vec3 uMean;
+out vec3 vC; out float vS;
+vec3 curl(vec3 p) { // divergence-free: each component ignores its own axis
+  return vec3(sin(p.y * 2.3 + p.z * 1.1 + uT * 0.35) + cos(p.z * 3.1 - uT * 0.27) * 0.6,
+              sin(p.z * 2.1 + p.x * 1.4 - uT * 0.31) + cos(p.x * 2.9 + uT * 0.22) * 0.6,
+              sin(p.x * 2.5 + p.y * 1.7 + uT * 0.29) + cos(p.y * 3.3 - uT * 0.25) * 0.6);
+}
+void main() {
+  float t = clamp((uP - aR.x * 0.35) / 0.65, 0.0, 1.0);
+  float m = smoothstep(0.3, 0.7, t);
+  float b = smoothstep(0.0, 0.4, t) * (1.0 - smoothstep(0.6, 1.0, t));
+  vec3 p = mix(aA, aB, m);
+  vec3 q = p * 1.6 + aR.yzw * 0.4;
+  vec3 v = curl(q) + 0.5 * curl(q * 2.1 + 7.0);
+  p += (v * (0.35 + aR.y) - uMean + (aR.zwx - 0.5) * 0.8) * b * uAmp;
+  p = uR * p;
+  p.z -= uD;
+  gl_Position = vec4(p.xy * uF, 0.0, -p.z); // depth test off
+  vC = mix(cA.rgb, cB.rgb, m);
+  vS = b;
+  gl_PointSize = max(uPx / -p.z * mix(1.0, 0.55 + 0.6 * aR.w, b), 1.0);
+}`;
+const frag = `#version 300 es
+precision mediump float;
+in vec3 vC; in float vS; out vec4 o;
+void main() {
+  float r = length(gl_PointCoord - 0.5) * 2.0;
+  float a = (1.0 - smoothstep(0.8, 1.0, r)) * mix(1.0, 0.75, vS);
+  o = vec4(vC, a);
+}`;
+
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, vert));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, frag));
+gl.linkProgram(prog); gl.useProgram(prog);
+const U = n => gl.getUniformLocation(prog, n);
+const u = { p: U('uP'), t: U('uT'), px: U('uPx'), amp: U('uAmp'), d: U('uD'), r: U('uR'), f: U('uF'), mean: U('uMean') };
+
+const buf = {};
+function attr(name, size, type, norm, data) {
+  const l = gl.getAttribLocation(prog, name), b = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, size, type, norm, 0, 0);
+  buf[name] = b;
+}
+const upload = (name, data) => { gl.bindBuffer(gl.ARRAY_BUFFER, buf[name]); gl.bufferSubData(gl.ARRAY_BUFFER, 0, data); };
+
+// Per-pixel data for one work: positions on the picture plane, relief from luminance (bright forward), colours.
+const rand = new Float32Array(N * 4).map(Math.random);
+const cache = new Map();
+const c2d = Object.assign(document.createElement('canvas'), { width: G, height: G }).getContext('2d', { willReadFrequently: true });
+function sample(work) {
+  if (cache.has(work)) return cache.get(work);
+  c2d.drawImage(work.img, 0, 0, G, G);
+  const px = c2d.getImageData(0, 0, G, G).data, pos = new Float32Array(N * 3), col = new Uint8Array(N * 4);
+  for (let i = 0; i < N; i++) {
+    const r = px[i * 4], g = px[i * 4 + 1], b = px[i * 4 + 2], L = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    pos[i * 3] = ((i % G) + 0.5) / G - 0.5;
+    pos[i * 3 + 1] = 0.5 - (Math.floor(i / G) + 0.5) / G;
+    pos[i * 3 + 2] = (L - 0.5) * RELIEF + (rand[i * 4 + 3] - 0.5) * 0.006;
+    col.set([r, g, b, 255], i * 4);
+  }
+  const d = { pos, col }; cache.set(work, d); return d;
+}
+
+
+// Mirror of the shader's field; its mean over the particles is subtracted so the cloud's centroid stays on the picture.
+const curl = (x, y, z, T) => [
+  Math.sin(y * 2.3 + z * 1.1 + T * 0.35) + Math.cos(z * 3.1 - T * 0.27) * 0.6,
+  Math.sin(z * 2.1 + x * 1.4 - T * 0.31) + Math.cos(x * 2.9 + T * 0.22) * 0.6,
+  Math.sin(x * 2.5 + y * 1.7 + T * 0.29) + Math.cos(y * 3.3 - T * 0.25) * 0.6];
+const sm = (a, b, x) => { x = Math.min(Math.max((x - a) / (b - a), 0), 1); return x * x * (3 - 2 * x); };
+function field(T, P, step, mean) { // mean field and resulting centroid of displaced particles
+  const A = sample(works[cur]).pos, B = sample(works[nxt]).pos, acc = [0, 0, 0], c = [0, 0, 0];
+  let n = 0;
+  for (let i = 0; i < N; i += step) {
+    const r = rand.subarray(i * 4, i * 4 + 4), t = Math.min(Math.max((P - r[0] * 0.35) / 0.65, 0), 1);
+    const m = sm(0.3, 0.7, t), b = sm(0, 0.4, t) * (1 - sm(0.6, 1, t));
+    const p = [0, 1, 2].map(k => A[i * 3 + k] + (B[i * 3 + k] - A[i * 3 + k]) * m);
+    const q = [p[0] * 1.6 + r[1] * 0.4, p[1] * 1.6 + r[2] * 0.4, p[2] * 1.6 + r[3] * 0.4];
+    const v1 = curl(q[0], q[1], q[2], T), v2 = curl(q[0] * 2.1 + 7, q[1] * 2.1 + 7, q[2] * 2.1 + 7, T);
+    const rr = [r[2], r[3], r[0]];
+    for (let k = 0; k < 3; k++) {
+      const d = (v1[k] + 0.5 * v2[k]) * (0.35 + r[1]); acc[k] += d;
+      c[k] += p[k] + (d - mean[k] + (rr[k] - 0.5) * 0.8) * b * AMP;
+    }
+    n++;
+  }
+  return { mean: acc.map(x => x / n), centroid: c.map(x => x / n) };
+}
+let mean = [0, 0, 0];
+
+let works = [], cur = 0, nxt = 0, prog_ = 0, t0 = 0, state = 'hold', holdUntil = 0;
+let W, H, dpr, mx = 0, my = 0, yaw = 0, pitch = 0;
+
+function resize() {
+  dpr = Math.min(devicePixelRatio, 2); W = innerWidth; H = innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr; gl.viewport(0, 0, canvas.width, canvas.height);
+  const f = 1 / Math.tan(FOV / 2), min = Math.min(W, H);
+  const d = 0.5 * f * H / (FILL * min);
+  gl.uniform2f(u.f, f * H / W, f); gl.uniform1f(u.d, d);
+  // pixels per picture unit at the picture plane, times 2.1x a grid cell so soft edges overlap into a continuous surface
+  gl.uniform1f(u.px, f * canvas.height / 2 / G * 2.1);
+}
+
+function show(i) {
+  const w = works[i], c = document.querySelector('.caption');
+  c.classList.add('out');
+  setTimeout(() => {
+    for (const k of ['title', 'artist', 'date']) c.querySelector('.' + k[0]).textContent = w[k];
+    c.classList.remove('out');
+  }, 500);
+}
+
+function next() {
+  if (state !== 'hold') return;
+  nxt = (cur + 1 + Math.floor(Math.random() * (works.length - 1))) % works.length;
+  const d = sample(works[nxt]);
+  upload('aB', d.pos); upload('cB', d.col);
+  state = 'move'; t0 = performance.now();
+  setTimeout(() => show(nxt), MOVE * 0.45);
+}
+
+const mat = (y, p) => { // pitch(p) * yaw(y), column-major
+  const cy = Math.cos(y), sy = Math.sin(y), cp = Math.cos(p), sp = Math.sin(p);
+  return new Float32Array([cy, sy * sp, -sy * cp, 0, cp, sp, sy, -cy * sp, cy * cp]);
+};
+
+let last = 0, frames = 0, fpsT = 0;
+function frame(ms) {
+  const t = still ? 0 : ms / 1000;
+  if (state === 'move') {
+    prog_ = Math.min((ms - t0) / (still ? 1500 : MOVE), 1);
+    if (prog_ >= 1) {
+      const d = sample(works[nxt]); upload('aA', d.pos); upload('cA', d.col);
+      cur = nxt; prog_ = 0; state = 'hold'; holdUntil = ms + HOLD;
+    }
+  } else if (ms > holdUntil && works.length) next();
+
+  if (state === 'move' && !still) mean = field(t, prog_, 16, [0, 0, 0]).mean;
+  gl.uniform3fv(u.mean, mean);
+  const k = still ? 0 : 1;
+  const ty = (mx * TILT + Math.sin(t * 0.13) * 0.025) * k, tp = (my * TILT + Math.sin(t * 0.09 + 1.3) * 0.018) * k;
+  yaw += (ty - yaw) * 0.06; pitch += (tp - pitch) * 0.06;
+  gl.uniformMatrix3fv(u.r, false, mat(yaw, pitch));
+  gl.uniform1f(u.p, prog_); gl.uniform1f(u.t, t); gl.uniform1f(u.amp, still ? 0 : AMP);
+  gl.clearColor(0.976, 0.976, 0.976, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.POINTS, 0, N);
+
+  frames++; if (ms - fpsT > 1000) { window.__debug = { fps: frames * 1000 / (ms - fpsT), n: N, cur, state, prog: prog_, next: () => next(), measure: (P, zero) => { const T = 7; const m0 = field(T, P, 4, [0, 0, 0]); return { before: m0.centroid, after: field(T, P, 4, zero ? [0, 0, 0] : m0.mean).centroid }; }, progress: v => { prog_ = v; } }; frames = 0; fpsT = ms; }
+  requestAnimationFrame(frame);
+}
+
+addEventListener('pointermove', e => { mx = e.clientX / W * 2 - 1; my = e.clientY / H * 2 - 1; });
+document.addEventListener('pointerleave', () => { mx = my = 0; });
+canvas.addEventListener('click', next);
+addEventListener('resize', resize);
+
+(async () => {
+  works = await (await fetch('../islands/works.json')).json();
+  await Promise.all(works.map(w => new Promise(res => {
+    w.img = new Image(); w.img.onload = res; w.img.src = '../islands/' + w.src;
+  })));
+  cur = Math.floor(Math.random() * works.length);
+  const d = sample(works[cur]);
+  const z = new Float32Array(N * 3);
+  attr('aA', 3, gl.FLOAT, false, d.pos); attr('aB', 3, gl.FLOAT, false, z);
+  attr('cA', 4, gl.UNSIGNED_BYTE, true, d.col); attr('cB', 4, gl.UNSIGNED_BYTE, true, d.col);
+  attr('aR', 4, gl.FLOAT, false, rand);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  resize(); show(cur); holdUntil = performance.now() + HOLD;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

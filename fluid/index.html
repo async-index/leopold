@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leopold Fluid</title>
+<style>
+  :root { --white: #f9f9f9; --black: #171717; --margin: 24px; --font: ui-monospace, "SF Mono", Menlo, monospace; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--white); color: var(--black);
+    font: 9px/180% var(--font); letter-spacing: -0.02em; text-transform: uppercase; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: pointer; }
+  nav { position: fixed; top: 0; left: 0; padding: 13px var(--margin); z-index: 1; color: var(--white); text-shadow: 0 0 4px rgba(0,0,0,.7), 0 0 1px rgba(0,0,0,.8); }
+  a { color: inherit; text-decoration: none; }
+  a:hover { opacity: .6; }
+  .caption { position: fixed; left: 0; right: 0; bottom: 14px; padding: 0 var(--margin); display: flex; gap: 8px;
+    justify-content: center; flex-wrap: wrap; text-align: center; pointer-events: none; color: var(--white); text-shadow: 0 0 4px rgba(0,0,0,.7), 0 0 1px rgba(0,0,0,.8); }
+</style>
+</head>
+<body>
+<nav><a href="../">Leopold</a></nav>
+<canvas></canvas>
+<div class="caption"><span class="t"></span><span class="a"></span><span class="d"></span></div>
+<script>
+const SIM = 192, DYE = 1024, ITER = 20;           // sim cells on the short side, max dye px on the short side, Jacobi iterations
+const VEL_DISS = 1.2, PRESSURE = 0.8, CURL = 20; // velocity decay /s, pressure carry-over, vorticity confinement
+const FORCE = 7000, RADIUS = 0.0009, HEAL = 2.2;  // splat force, splat gaussian size (height^2), healing time constant in s
+
+const canvas = document.querySelector('canvas');
+const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+if (!gl || !gl.getExtension('EXT_color_buffer_float')) {
+  document.querySelector('.t').textContent = 'WebGL2 float rendering unavailable';
+  throw 0;
+}
+
+const vert = `#version 300 es
+in vec2 v; out vec2 vUv; void main() { vUv = v * 0.5 + 0.5; gl_Position = vec4(v, 0.0, 1.0); }`;
+const head = `#version 300 es
+precision highp float; precision highp sampler2D; in vec2 vUv; out vec4 o;
+uniform vec2 uTexel;
+`;
+function shader(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s);
+  return s;
+}
+const vs = shader(gl.VERTEX_SHADER, vert);
+function program(src) {
+  const p = gl.createProgram();
+  gl.attachShader(p, vs); gl.attachShader(p, shader(gl.FRAGMENT_SHADER, head + src));
+  gl.bindAttribLocation(p, 0, 'v'); gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw gl.getProgramInfoLog(p);
+  const loc = {};
+  return { p, u: n => loc[n] ?? (loc[n] = gl.getUniformLocation(p, n)) };
+}
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+const P = {
+  advect: program(`uniform sampler2D uVel, uSrc; uniform float uDt, uDiss;
+    void main() { o = texture(uSrc, vUv - uDt * texture(uVel, vUv).xy * uTexel) / (1.0 + uDiss * uDt); }`),
+  // Dye advection with the painting pulling it home: source is cover-fitted, mixed in by uHeal (+ a tiny linear pull so fp16 can finish the job).
+  dye: program(`uniform sampler2D uVel, uSrc, uImg; uniform float uDt, uHeal, uAsp;
+    void main() {
+      vec3 d = texture(uSrc, vUv - uDt * texture(uVel, vUv).xy * uTexel).rgb;
+      vec2 q = (vUv - 0.5) * vec2(min(1.0, uAsp), min(1.0, 1.0 / uAsp)) + 0.5;
+      vec3 s = texture(uImg, vec2(q.x, 1.0 - q.y)).rgb;
+      d = mix(d, s, uHeal); d += clamp(s - d, -0.003, 0.003);
+      o = vec4(d, 1.0);
+    }`),
+  splat: program(`uniform sampler2D uSrc; uniform float uAsp, uR; uniform vec2 uP; uniform vec3 uC;
+    void main() { vec2 p = vUv - uP; p.x *= uAsp; o = vec4(texture(uSrc, vUv).xyz + exp(-dot(p, p) / uR) * uC, 1.0); }`),
+  div: program(`uniform sampler2D uVel;
+    void main() {
+      vec2 t = uTexel; float L = texture(uVel, vUv - vec2(t.x, 0)).x, R = texture(uVel, vUv + vec2(t.x, 0)).x;
+      float B = texture(uVel, vUv - vec2(0, t.y)).y, T = texture(uVel, vUv + vec2(0, t.y)).y;
+      vec2 C = texture(uVel, vUv).xy;
+      if (vUv.x - t.x < 0.0) L = -C.x; if (vUv.x + t.x > 1.0) R = -C.x;
+      if (vUv.y - t.y < 0.0) B = -C.y; if (vUv.y + t.y > 1.0) T = -C.y;
+      o = vec4(0.5 * (R - L + T - B), 0, 0, 1);
+    }`),
+  curl: program(`uniform sampler2D uVel;
+    void main() {
+      vec2 t = uTexel;
+      float L = texture(uVel, vUv - vec2(t.x, 0)).y, R = texture(uVel, vUv + vec2(t.x, 0)).y;
+      float B = texture(uVel, vUv - vec2(0, t.y)).x, T = texture(uVel, vUv + vec2(0, t.y)).x;
+      o = vec4(0.5 * (R - L - T + B), 0, 0, 1);
+    }`),
+  vort: program(`uniform sampler2D uVel, uCurl; uniform float uCurlK, uDt;
+    void main() {
+      vec2 t = uTexel;
+      float L = texture(uCurl, vUv - vec2(t.x, 0)).x, R = texture(uCurl, vUv + vec2(t.x, 0)).x;
+      float B = texture(uCurl, vUv - vec2(0, t.y)).x, T = texture(uCurl, vUv + vec2(0, t.y)).x, C = texture(uCurl, vUv).x;
+      vec2 f = 0.5 * vec2(abs(T) - abs(B), abs(R) - abs(L));
+      f /= length(f) + 1e-4; f *= uCurlK * C; f.y = -f.y;
+      o = vec4(clamp(texture(uVel, vUv).xy + f * uDt, -1000.0, 1000.0), 0, 1);
+    }`),
+  clear: program(`uniform sampler2D uSrc; uniform float uK; void main() { o = uK * texture(uSrc, vUv); }`),
+  press: program(`uniform sampler2D uP, uDiv;
+    void main() {
+      vec2 t = uTexel;
+      float L = texture(uP, vUv - vec2(t.x, 0)).x, R = texture(uP, vUv + vec2(t.x, 0)).x;
+      float B = texture(uP, vUv - vec2(0, t.y)).x, T = texture(uP, vUv + vec2(0, t.y)).x;
+      o = vec4((L + R + B + T - texture(uDiv, vUv).x) * 0.25, 0, 0, 1);
+    }`),
+  grad: program(`uniform sampler2D uP, uVel;
+    void main() {
+      vec2 t = uTexel;
+      float L = texture(uP, vUv - vec2(t.x, 0)).x, R = texture(uP, vUv + vec2(t.x, 0)).x;
+      float B = texture(uP, vUv - vec2(0, t.y)).x, T = texture(uP, vUv + vec2(0, t.y)).x;
+      o = vec4(texture(uVel, vUv).xy - vec2(R - L, T - B), 0, 1);
+    }`),
+  show: program(`uniform sampler2D uSrc; void main() { o = vec4(texture(uSrc, vUv).rgb, 1.0); }`),
+};
+
+function target(w, h, fmt, format, filter) {
+  const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, fmt, w, h);
+  for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, filter);
+  for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+  const fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  return { tex, fbo, w, h, tx: 1 / w, ty: 1 / h };
+}
+const pair = (...a) => { const r = { a: target(...a), b: target(...a), swap() { [this.a, this.b] = [this.b, this.a]; } }; return r; };
+
+let vel, prs, dye, div, curl, aspect;
+const tex = (u, t, i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(u, i); };
+function pass(pr, out, set) {
+  gl.useProgram(pr.p);
+  const uni = (n, ...v) => v.length == 1 ? gl.uniform1f(pr.u(n), v[0]) : v.length == 2 ? gl.uniform2f(pr.u(n), ...v) : gl.uniform3f(pr.u(n), ...v);
+  const t = (n, tx, i) => tex(pr.u(n), tx, i);
+  set(uni, t);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, out.fbo); gl.viewport(0, 0, out.w, out.h);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+let works = [], imgs = [], cur = 0, mix = 0, W, H;
+function resize() {
+  W = innerWidth; H = innerHeight; aspect = W / H;
+  const dpr = Math.min(devicePixelRatio, 2);
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  const sc = Math.min(1, DYE / Math.min(canvas.width, canvas.height));
+  const dw = Math.round(canvas.width * sc), dh = Math.round(canvas.height * sc);
+  const sx = aspect >= 1 ? Math.round(SIM * aspect) : SIM, sy = aspect >= 1 ? SIM : Math.round(SIM / aspect);
+  vel = pair(sx, sy, gl.RG16F, gl.RG, gl.LINEAR);
+  prs = pair(sx, sy, gl.R16F, gl.RED, gl.NEAREST);
+  div = target(sx, sy, gl.R16F, gl.RED, gl.NEAREST); curl = target(sx, sy, gl.R16F, gl.RED, gl.NEAREST);
+  dye = pair(dw, dh, gl.RGBA16F, gl.RGBA, gl.LINEAR);
+  for (const f of [vel.a, vel.b, prs.a, prs.b, div, curl, dye.a, dye.b]) { gl.bindFramebuffer(gl.FRAMEBUFFER, f.fbo); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); }
+  if (imgs.length) pass(P.dye, dye.a, (u, t) => { t('uVel', vel.a.tex, 0); t('uSrc', dye.b.tex, 1); t('uImg', imgs[cur], 2); u('uDt', 0); u('uHeal', 1); u('uAsp', aspect); u('uTexel', vel.a.tx, vel.a.ty); });
+}
+
+function splat(x, y, dx, dy) {
+  pass(P.splat, vel.b, (u, t) => { t('uSrc', vel.a.tex, 0); u('uAsp', aspect); u('uR', RADIUS); u('uP', x, y); u('uC', dx, dy, 0); });
+  vel.swap();
+}
+const queue = [];
+let px = null, py, down = null, moved = 0, trans = 0;
+function kick(i) { // gentle automatic swirl around the centre
+  if (still) return;
+  const n = 6, r = 0.18, dir = i ? 1 : -1;
+  for (let k = 0; k < n; k++) {
+    const a = k / n * 6.283 + Math.random() * 0.4;
+    queue.push([0.5 + r * Math.cos(a) / aspect, 0.5 + r * Math.sin(a), -Math.sin(a) * 140 * dir, Math.cos(a) * 140 * dir]);
+  }
+}
+function setCaption() {
+  const w = works[cur];
+  for (const k of ['t', 'a', 'd']) document.querySelector('.caption .' + k).textContent = w[{ t: 'title', a: 'artist', d: 'date' }[k]];
+}
+function next() { cur = (cur + 1) % works.length; trans = 1; setCaption(); kick(cur & 1); }
+
+addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; moved = 0; px = e.clientX; py = e.clientY; });
+addEventListener('pointermove', e => {
+  if (px !== null) {
+    const dx = (e.clientX - px) / H, dy = -(e.clientY - py) / H; // height units: isotropic
+    moved += Math.hypot(e.clientX - px, e.clientY - py);
+    if (dx || dy) queue.push([e.clientX / W, 1 - e.clientY / H, dx * FORCE, dy * FORCE]);
+  }
+  px = e.clientX; py = e.clientY;
+});
+addEventListener('pointerup', e => { if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 6 && moved < 12) next(); down = null; if (e.pointerType !== 'mouse') px = null; });
+document.addEventListener('pointerleave', () => { px = null; });
+addEventListener('pointercancel', () => { down = null; px = null; });
+addEventListener('resize', resize);
+
+let last = 0, frames = 0;
+window.__debug = { get frames() { return frames; }, get cur() { return cur; } };
+function frame(ms) {
+  const dt = Math.min((ms - last) / 1000 || 0.016, 0.0167); last = ms; frames++;
+  gl.disable(gl.BLEND);
+  for (const s of queue.splice(0)) splat(...s);
+  const vt = [vel.a.tx, vel.a.ty];
+
+  pass(P.curl, curl, (u, t) => { t('uVel', vel.a.tex, 0); u('uTexel', ...vt); });
+  pass(P.vort, vel.b, (u, t) => { t('uVel', vel.a.tex, 0); t('uCurl', curl.tex, 1); u('uTexel', ...vt); u('uCurlK', CURL); u('uDt', dt); });
+  vel.swap();
+  pass(P.div, div, (u, t) => { t('uVel', vel.a.tex, 0); u('uTexel', ...vt); });
+  pass(P.clear, prs.b, (u, t) => { t('uSrc', prs.a.tex, 0); u('uK', PRESSURE); u('uTexel', ...vt); });
+  prs.swap();
+  for (let i = 0; i < ITER; i++) {
+    pass(P.press, prs.b, (u, t) => { t('uP', prs.a.tex, 0); t('uDiv', div.tex, 1); u('uTexel', ...vt); });
+    prs.swap();
+  }
+  pass(P.grad, vel.b, (u, t) => { t('uP', prs.a.tex, 0); t('uVel', vel.a.tex, 1); u('uTexel', ...vt); });
+  vel.swap();
+  pass(P.advect, vel.b, (u, t) => { t('uVel', vel.a.tex, 0); t('uSrc', vel.a.tex, 1); u('uTexel', ...vt); u('uDt', dt); u('uDiss', VEL_DISS); });
+  vel.swap();
+
+  trans = Math.max(0, trans - dt / 3);
+  const heal = 1 - Math.exp(-dt / HEAL) + trans * trans * 0.05 + (still ? 0.05 : 0);
+  pass(P.dye, dye.b, (u, t) => { t('uVel', vel.a.tex, 0); t('uSrc', dye.a.tex, 1); t('uImg', imgs[cur], 2); u('uTexel', ...vt); u('uDt', dt); u('uHeal', Math.min(heal, 1)); u('uAsp', aspect); });
+  dye.swap();
+
+  pass(P.show, { fbo: null, w: canvas.width, h: canvas.height }, (u, t) => t('uSrc', dye.a.tex, 0));
+  requestAnimationFrame(frame);
+}
+
+(async () => {
+  works = (await (await fetch('../islands/works.json')).json());
+  const imgEls = await Promise.all(works.map(w => new Promise(res => {
+    const im = new Image(); im.onload = () => res(im); im.src = '../islands/' + w.src;
+  })));
+  imgs = imgEls.map(im => {
+    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, im);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  });
+  cur = Math.floor(Math.random() * works.length);
+  resize(); setCaption();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
