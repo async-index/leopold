@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leopold Explore</title>
+<style>
+  :root { --white: #f9f9f9; --black: #171717; --font: ui-monospace, "SF Mono", Menlo, monospace; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; background: var(--white); color: var(--black);
+    font: 9px/1.4 var(--font); letter-spacing: -0.02em; text-transform: uppercase; }
+  a { color: inherit; text-decoration: none; }
+
+  .view { position: fixed; inset: 0; cursor: grab; touch-action: none; }
+  .view.dragging { cursor: grabbing; }
+  .field { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .field.ease { transition: transform .6s cubic-bezier(.6, 0, .2, 1); }
+  .item { position: absolute; left: 0; top: 0; transition: transform .5s cubic-bezier(.6, 0, .2, 1), opacity .3s; }
+  .item[hidden] { display: none; }
+  .item img { display: block; width: 100%; height: 100%; object-fit: cover; background: #ececea; -webkit-user-drag: none; user-select: none; }
+  .item .txt { position: absolute; top: 100%; left: 0; width: 100%; padding-top: 6px; transition: opacity .3s; }
+  .item .k { opacity: .5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item h2 { font: 15px/1.15 var(--font); letter-spacing: -0.03em; margin: 3px 0 4px; }
+  .item .x { text-transform: none; font-size: 10px; line-height: 1.35; letter-spacing: 0; display: -webkit-box;
+    -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .item .card { width: 100%; height: 100%; border: 1px solid var(--black); padding: 12px; display: flex; align-items: flex-end;
+    font: 22px/1.1 var(--font); letter-spacing: -0.03em; background: var(--white); }
+  body:not([data-step="0"]) .item .txt { opacity: 0; }
+  body:not([data-step="0"]) .item { cursor: zoom-in; }
+  body[data-step="0"] .item { cursor: pointer; }
+
+  /* Overlaid navigation, top left */
+  .nav { position: fixed; top: 10px; left: 10px; z-index: 2; width: 320px; max-width: calc(100% - 20px);
+    background: var(--white); border: 1px solid var(--black); }
+  .bar { display: flex; height: 28px; }
+  .bar > * { border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+  .bar input { flex: 1; min-width: 0; padding: 0 8px; outline: none; }
+  .bar input::placeholder { color: var(--black); opacity: .35; }
+  .bar button { width: 28px; flex: none; border-left: 1px solid var(--black); cursor: pointer; display: grid; place-items: center; }
+  .bar button:hover, .panel a:hover, .panel button:hover { background: var(--black); color: var(--white); }
+  .bar svg { width: 11px; height: 11px; display: block; }
+  .panel { border-top: 1px solid var(--black); }
+  .panel[hidden] { display: none; }
+  .panel a, .panel button { display: flex; justify-content: space-between; width: 100%; padding: 6px 8px; border: 0;
+    border-bottom: 1px solid var(--black); background: none; color: inherit; font: inherit; letter-spacing: inherit;
+    text-transform: inherit; text-align: left; cursor: pointer; }
+  .panel > :last-child { border-bottom: 0; }
+  .panel .on { background: var(--black); color: var(--white); }
+  .panel span { opacity: .45; }
+  .count { position: fixed; left: 10px; bottom: 10px; padding: 2px 4px; background: var(--white); color: rgba(23, 23, 23, .5); pointer-events: none; }
+</style>
+</head>
+<body data-step="0">
+<div class="view"><div class="field"></div></div>
+<div class="nav">
+  <div class="bar">
+    <input type="search" placeholder="Suchen" aria-label="Suchen">
+    <button class="zout" aria-label="Zoom out"><svg viewBox="0 0 11 11"><path d="M1 5.5h9" stroke="currentColor"/></svg></button>
+    <button class="zin" aria-label="Zoom in"><svg viewBox="0 0 11 11"><path d="M1 5.5h9M5.5 1v9" stroke="currentColor"/></svg></button>
+    <button class="tfilter" aria-label="Filter"><svg viewBox="0 0 11 11"><path d="M3 1v9M8 1v9M1.5 3.5h3M6.5 7.5h3" stroke="currentColor"/></svg></button>
+    <button class="tmenu" aria-label="Menu"><svg viewBox="0 0 11 11"><path d="M1 3.5h9M1 7.5h9" stroke="currentColor"/></svg></button>
+  </div>
+  <div class="panel filter" hidden></div>
+  <div class="panel menu" hidden>
+    <a href="https://www.leopoldmuseum.org/de/besuch/tickets-preise/online-ticket" target="_blank">Tickets <span>↗</span></a>
+    <a href="https://www.leopoldmuseum.org/de/besuch/oeffnungszeiten" target="_blank">Öffnungszeiten <span>↗</span></a>
+    <a href="https://www.leopoldmuseum.org/de/besuch/anreise" target="_blank">Anreise <span>↗</span></a>
+    <a href="https://www.leopoldmuseum.org/de/newsletter" target="_blank">Newsletter <span>↗</span></a>
+    <a href="https://www.leopoldmuseum.org/de/kontakt" target="_blank">Kontakt <span>↗</span></a>
+    <a href="../">Leopold <span>Explorations</span></a>
+  </div>
+</div>
+<div class="count"></div>
+<script type="module">
+const CELL = 480, STEPS = [1, 0.5, 0.23]; // cell pitch at step 0 (css px), scale per zoom step
+const view = document.querySelector('.view'), field = document.querySelector('.field');
+// Site content, current exhibitions and programme first so they take the centre.
+const CATS = ['Ausstellungen', 'Programm', 'Besuch', 'Sammlung', 'Museum', 'Forschung', 'Engagement', 'Vermietung', 'Presse', 'Info'];
+const works = (await (await fetch('items.json')).json()).sort((a, b) => CATS.indexOf(a.cat) - CATS.indexOf(b.cat));
+
+// Field: a square of cells, odd columns dropped half a cell, small fixed jitter per cell.
+const COLS = Math.ceil(Math.sqrt(works.length)), ROWS = Math.ceil(works.length / COLS) + 1;
+let seed = 1918; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const cells = [];
+for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++)
+  cells.push({ x: c * CELL + (rnd() - .5) * CELL * .1, y: r * CELL + (c % 2) * CELL / 2 + (rnd() - .5) * CELL * .1 });
+const FW = COLS * CELL, FH = ROWS * CELL + CELL / 2;
+// Cells nearest the centre first, so a filtered set gathers in the middle.
+const order = cells.map((c, i) => i).sort((a, b) =>
+  Math.hypot(cells[a].x - FW / 2, cells[a].y - FH / 2) - Math.hypot(cells[b].x - FW / 2, cells[b].y - FH / 2));
+
+const esc = t => t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const items = works.map(w => {
+  // Equal area per item, uncropped; room left below for the text.
+  const s = CELL * .6, k = Math.min(1, CELL * .66 / (s * Math.max(Math.sqrt(w.r), 1 / Math.sqrt(w.r))));
+  const wd = s * Math.sqrt(w.r) * k, ht = wd / w.r;
+  const el = document.createElement('div'); el.className = 'item';
+  el.style.width = wd + 'px'; el.style.height = ht + 'px';
+  const img = document.createElement(w.img ? 'img' : 'div');
+  if (w.img) { img.alt = w.title; img.decoding = 'async'; img.draggable = false; } else { img.className = 'card'; img.textContent = w.title; }
+  const when = w.when + (w.more ? ` (+${w.more} Termine)` : '');
+  const txt = document.createElement('div'); txt.className = 'txt';
+  txt.innerHTML = `<div class="k">${esc([w.cat, w.kicker, when].filter(Boolean).join(' · '))}</div><h2>${esc(w.title)}</h2>` +
+    `<div class="x">${esc(w.sub || w.text)}</div>`;
+  el.append(img, txt); field.append(el);
+  return { w, el, img, wd, ht, x: 0, y: 0, res: 0 };
+});
+
+let step = 0, scale = STEPS[0], px = 0, py = 0;
+function apply(ease) {
+  field.classList.toggle('ease', !!ease);
+  field.style.transform = `translate(${px}px, ${py}px) scale(${scale})`;
+  document.body.dataset.step = step;
+  clearTimeout(apply.t); apply.t = setTimeout(load, ease ? 650 : 120);
+}
+// Load only what is on screen: museum preview when small, the larger file at the closest step.
+function load() {
+  const m = 400 / scale, x0 = -px / scale - m, y0 = -py / scale - m, x1 = x0 + innerWidth / scale + 2 * m, y1 = y0 + innerHeight / scale + 2 * m;
+  for (const it of items) {
+    if (it.el.hidden || it.x + it.wd < x0 || it.x > x1 || it.y + it.ht < y0 || it.y > y1) continue;
+    if (!it.res && it.w.img) { it.img.src = it.w.img; it.res = 1; }
+  }
+}
+function zoomTo(s, ax = innerWidth / 2, ay = innerHeight / 2) {
+  s = Math.max(0, Math.min(STEPS.length - 1, s)); if (s === step) return;
+  const k = STEPS[s] / scale; px = ax - (ax - px) * k; py = ay - (ay - py) * k;
+  step = s; scale = STEPS[s]; clamp(); apply(true);
+}
+function centreOn(x, y) { px = innerWidth / 2 - x * scale; py = innerHeight / 2 - y * scale; clamp(); }
+function clamp() {
+  px = Math.min(innerWidth / 2, Math.max(innerWidth / 2 - FW * scale, px));
+  py = Math.min(innerHeight / 2, Math.max(innerHeight / 2 - FH * scale, py));
+}
+
+// Search + filter: matching works take the cells nearest the centre.
+let query = '', artist = '';
+function layout() {
+  const q = query.toLowerCase();
+  let n = 0;
+  for (const it of items) {
+    const on = (!artist || it.w.cat === artist) && (!q || [it.w.cat, it.w.kicker, it.w.title, it.w.sub, it.w.text, it.w.when].join(' ').toLowerCase().includes(q));
+    it.el.hidden = !on; if (!on) continue;
+    const c = cells[order[n++]];
+    it.x = c.x + (CELL - it.wd) / 2; it.y = c.y + (CELL * .72 - it.ht) / 2;
+    it.el.style.transform = `translate(${it.x}px, ${it.y}px)`;
+  }
+  document.querySelector('.count').textContent = n + ' / ' + works.length;
+  centreOn(FW / 2, FH / 2); apply(true);
+}
+
+// Drag to pan; a click without movement zooms in on the work, or opens it at the closest step.
+let drag = null;
+view.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, px, py, moved: 0 }; view.setPointerCapture(e.pointerId); });
+view.addEventListener('pointermove', e => {
+  if (!drag) return;
+  drag.moved = Math.max(drag.moved, Math.hypot(e.clientX - drag.x, e.clientY - drag.y));
+  if (drag.moved < 4) return;
+  view.classList.add('dragging');
+  px = drag.px + e.clientX - drag.x; py = drag.py + e.clientY - drag.y; clamp(); apply(false);
+});
+view.addEventListener('pointerup', e => {
+  const d = drag; drag = null; view.classList.remove('dragging');
+  if (!d || d.moved >= 4) return;
+  view.releasePointerCapture(e.pointerId);
+  const hit = document.elementsFromPoint(e.clientX, e.clientY).find(el => el.classList?.contains('item'));
+  const it = hit && items.find(i => i.el === hit); if (!it) return;
+  if (step === 0) { open(it.w.url, '_blank'); return; }
+  step--; scale = STEPS[step]; centreOn(it.x + it.wd / 2, it.y + it.ht / 2); apply(true);
+});
+// Wheel / trackpad: one zoom step per gesture, anchored at the cursor.
+let acc = 0, lock = 0;
+view.addEventListener('wheel', e => {
+  e.preventDefault(); if (performance.now() < lock) return;
+  acc += e.deltaY; if (Math.abs(acc) < 40) return;
+  zoomTo(step + Math.sign(acc), e.clientX, e.clientY); acc = 0; lock = performance.now() + 700;
+}, { passive: false });
+document.querySelector('.zin').onclick = () => zoomTo(step - 1);
+document.querySelector('.zout').onclick = () => zoomTo(step + 1);
+
+// Navigation panels
+const pf = document.querySelector('.panel.filter'), pm = document.querySelector('.panel.menu');
+const counts = {}; works.forEach(w => counts[w.cat] = (counts[w.cat] || 0) + 1);
+const top = CATS.filter(c => counts[c]).map(c => [c, counts[c]]);
+pf.innerHTML = [['', works.length], ...top].map(([a, n]) => `<button data-a="${a}">${a || 'Alle'} <span>(${n})</span></button>`).join('');
+pf.onclick = e => {
+  const b = e.target.closest('button'); if (!b) return;
+  artist = b.dataset.a; pf.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); layout();
+};
+pf.firstChild.classList.add('on');
+document.querySelector('.tfilter').onclick = () => { pf.hidden = !pf.hidden; pm.hidden = true; };
+document.querySelector('.tmenu').onclick = () => { pm.hidden = !pm.hidden; pf.hidden = true; };
+document.querySelector('.bar input').addEventListener('input', e => { query = e.target.value.trim(); layout(); });
+addEventListener('keydown', e => { if (e.key === 'Escape') { pf.hidden = pm.hidden = true; } });
+addEventListener('resize', () => { clamp(); apply(false); });
+
+layout();
+</script>
+</body>
+</html>
